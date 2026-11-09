@@ -284,6 +284,7 @@ Workflow `.github/workflows/build.yml` berjalan pada setiap push ke `main`, seti
 ```bash
 git tag v1.0.1 && git push origin v1.0.1
 ```
+Catatan rilis diambil dari `docs/releases/<tag>.md` bila ada (juga tampil di "Apa yang baru" dalam aplikasi), selain itu dibuat otomatis.
 `versionName` diambil dari tag (`1.0.1`), `versionCode` = nomor run (selalu naik, jadi APK baru bisa menimpa yang lama).
 
 **Kunci tanda tangan** (*Settings → Secrets and variables → Actions*):
