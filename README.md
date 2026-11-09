@@ -280,7 +280,7 @@ Workflow `.github/workflows/build.yml` berjalan pada setiap push ke `main`, seti
 2. membangun APK release (R8),
 3. mengunggahnya sebagai **artifact** `Animeruu-<versi>` (tab *Actions* → run → *Artifacts*, disimpan 30 hari).
 
-**Rilis:** push tag `v*`, maka APK langsung dilampirkan ke **GitHub Release**:
+**Rilis:** push tag `v*`, **atau** *Actions → Build APK → Run workflow* lalu isi `release_tag` (mis. `v1.2.0`). Tag dan **GitHub Release** dibuat otomatis, dan APK dilampirkan:
 ```bash
 git tag v1.0.1 && git push origin v1.0.1
 ```
