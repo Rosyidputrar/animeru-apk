@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import okhttp3.Cache
@@ -90,6 +91,7 @@ class AppContainer(private val app: Application) {
 
     val mediaDataSource = OkHttpDataSource.Factory(mediaHttp)
     val downloads by lazy { DownloadRepository(app, db.downloads(), mediaDataSource) }
+    val updates by lazy { dev.animeruu.update.UpdateManager(app, baseHttp, appScope) }
 
     val imageLoader: ImageLoader by lazy {
         ImageLoader.Builder(app)
@@ -103,6 +105,11 @@ class AppContainer(private val app: Application) {
     }
 
     fun start() {
+        updates.restore()
+        appScope.launch {
+            val s = settings.settings.first()
+            if (s.autoCheckUpdates && updates.shouldAutoCheck()) updates.check(manual = false)
+        }
         appScope.launch {
             settings.settings.map { it.wifiOnlyDownloads }.distinctUntilChanged().collect { downloads.setWifiOnly(it) }
         }

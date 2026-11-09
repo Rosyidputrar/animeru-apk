@@ -27,6 +27,12 @@ android {
         // CI mengisi VERSION_CODE (nomor run) & VERSION_NAME (dari tag v1.2.3); lokal pakai bawaan.
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.0.0"
+        // Repo GitHub sumber pembaruan dalam aplikasi (CI mengisi GITHUB_REPOSITORY otomatis).
+        val updateRepo = System.getenv("GITHUB_REPOSITORY")?.takeIf { it.isNotBlank() } ?: "Rosyidputrar/animeru-apk"
+        buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
+        // Hanya untuk uji lokal (server tiruan); build rilis/CI selalu ke api.github.com.
+        val updateApi = System.getenv("UPDATE_API_BASE")?.takeIf { it.isNotBlank() } ?: "https://api.github.com"
+        buildConfigField("String", "UPDATE_API", "\"$updateApi\"")
         resourceConfigurations += listOf("id", "en")
     }
 

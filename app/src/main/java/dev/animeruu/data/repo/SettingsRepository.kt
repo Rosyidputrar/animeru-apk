@@ -16,6 +16,8 @@ data class Settings(
     val autoplayNext: Boolean = true,
     /** Masuk Picture-in-Picture otomatis saat keluar aplikasi ketika video sedang diputar. */
     val autoPip: Boolean = true,
+    /** Cek GitHub Releases otomatis (maks. 2× sehari) saat aplikasi dibuka. */
+    val autoCheckUpdates: Boolean = true,
 )
 
 private val Context.store by preferencesDataStore("settings")
@@ -26,6 +28,7 @@ class SettingsRepository(private val context: Context) {
     private val kWifi = booleanPreferencesKey("wifi_only")
     private val kAutoplay = booleanPreferencesKey("autoplay")
     private val kPip = booleanPreferencesKey("auto_pip")
+    private val kUpd = booleanPreferencesKey("auto_update_check")
 
     val settings: Flow<Settings> = context.store.data.map {
         Settings(
@@ -34,6 +37,7 @@ class SettingsRepository(private val context: Context) {
             wifiOnlyDownloads = it[kWifi] ?: true,
             autoplayNext = it[kAutoplay] ?: true,
             autoPip = it[kPip] ?: true,
+            autoCheckUpdates = it[kUpd] ?: true,
         )
     }
 
@@ -42,4 +46,5 @@ class SettingsRepository(private val context: Context) {
     suspend fun setWifiOnly(v: Boolean) = context.store.edit { it[kWifi] = v }
     suspend fun setAutoplay(v: Boolean) = context.store.edit { it[kAutoplay] = v }
     suspend fun setAutoPip(v: Boolean) = context.store.edit { it[kPip] = v }
+    suspend fun setAutoCheckUpdates(v: Boolean) = context.store.edit { it[kUpd] = v }
 }

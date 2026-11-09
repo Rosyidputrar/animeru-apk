@@ -36,12 +36,30 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
         preferHighestRefreshRate()
+        handleUpdateIntent(intent)
         setContent {
             AnimeruuTheme {
                 CompositionLocalProvider(LocalPosters provides container.posters) {
                     AnimeruuApp()
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handleUpdateIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        container.updates.onResume()
+    }
+
+    private fun handleUpdateIntent(intent: android.content.Intent?) {
+        if (intent?.getBooleanExtra(dev.animeruu.update.UpdateManager.EXTRA_OPEN_UPDATE, false) == true) {
+            container.updates.cancelReadyNotification()
+            container.updates.requestSheet()
         }
     }
 

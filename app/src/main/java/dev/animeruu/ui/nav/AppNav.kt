@@ -225,6 +225,8 @@ fun AnimeruuApp() {
                 }
             }
         }
+        // Lembar pembaruan: hanya muncul sendiri di layar tab — tidak pernah menutupi video/detail.
+        dev.animeruu.ui.update.UpdateSheetHost(ctx.container.updates, allowAutoShow = entry?.isTab() ?: false || entry?.destination?.hasRoute<SettingsRoute>() == true)
         AnimatedVisibility(
             visible = entry?.isTab() ?: true,
             modifier = Modifier.align(Alignment.BottomCenter),
