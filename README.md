@@ -242,6 +242,36 @@ siap sebagai berikutnya. Riwayat dan posisi resume tersimpan (09).
 
 ---
 
+## Pembaruan dalam aplikasi
+
+**Pengaturan → Pembaruan** menampilkan versi terpasang, status, tombol *Periksa / Unduh / Pasang*,
+catatan rilis, dan sakelar "Cek pembaruan otomatis" (saat aplikasi dibuka, paling sering 2×
+sehari). Bila ada versi baru, sebuah lembar muncul **hanya di layar tab**, tidak pernah di
+atas video. "Nanti saja" menyembunyikannya untuk versi itu.
+
+Sumber pembaruan adalah `GET https://api.github.com/repos/<repo>/releases/latest` (rilis
+non-draft, non-prerelease, dengan aset `.apk`). Inilah satu-satunya layanan di luar REST-ANIM
+& CDN gambar, dan hanya dipakai untuk memeriksa/mengunduh pembaruan.
+
+| Skenario | Penanganan |
+|---|---|
+| Keluar / menutup aplikasi saat mengunduh | `DownloadManager` sistem melanjutkan di latar (tahan putus jaringan). Setelah selesai: verifikasi, lalu notifikasi "siap dipasang" (ketuk → lembar pembaruan) |
+| Membuka lagi aplikasi | Status unduhan dipulihkan dari id yang tersimpan |
+| Unduhan dihapus dari aplikasi Download sistem | Kembali ke "tersedia" |
+| Penyimpanan penuh / server menolak / koneksi putus | Pesan spesifik + *Unduh ulang* |
+| Berkas rusak / terpotong | Ukuran & **SHA-256** dicocokkan dengan `digest` rilis GitHub; bila gagal, berkas dihapus |
+| APK paket lain / versi sama atau lebih lama | Ditolak sebelum installer dibuka |
+| **Tanda tangan berbeda** (mis. build CI tanpa secrets) | Dideteksi sebelum installer dibuka, dengan penjelasan (Android akan menolak; perlu uninstall) |
+| Izin "Pasang aplikasi tak dikenal" belum ada | Diarahkan ke Pengaturan sistem; pemasangan berlanjut otomatis saat kembali |
+| Installer dibatalkan | Kembali ke "Pasang sekarang" |
+| Video sedang diputar | Lembar tidak muncul di player; posisi tersimpan sebelum installer (ON_STOP) |
+| GitHub membatasi (403/429) / offline / belum ada rilis | Pesan ramah, tanpa crash |
+| Berhasil diperbarui | Lembar "Berhasil diperbarui ke vX" + catatan rilis; APK unduhan dihapus |
+
+Pemasangan memakai `PackageInstaller` (session API) dengan izin `REQUEST_INSTALL_PACKAGES`.
+Di Android 12+, pembaruan berikutnya bisa tanpa dialog bila Animeruu sendiri yang memasang
+versi sebelumnya (`USER_ACTION_NOT_REQUIRED`).
+
 ## Build otomatis (GitHub Actions)
 
 Workflow `.github/workflows/build.yml` berjalan pada setiap push ke `main`, setiap pull request, dan bisa dijalankan manual (*Actions → Build APK → Run workflow*):

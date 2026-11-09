@@ -61,6 +61,11 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit) {
             Spacer(Modifier.width(12.dp))
             Text("Pengaturan", style = MaterialTheme.typography.headlineSmall, color = Palette.Text)
         }
+        Group("Pembaruan") {
+            dev.animeruu.ui.update.UpdateSettingsCard(
+                c.updates, s.autoCheckUpdates, { v -> scope.launch { c.settings.setAutoCheckUpdates(v) } },
+            ) { t, sub, v, on -> Toggle(t, sub, v, on) }
+        }
         Group("Pemutaran") {
             Label("Kualitas bawaan", "Otomatis: 720p di Wi‑Fi, 480p di data seluler. Bila gagal, aplikasi turun/naik ke kualitas lain secara otomatis.")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
