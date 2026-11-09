@@ -87,6 +87,9 @@ interface FavoriteDao {
     @Query("SELECT * FROM favorites ORDER BY addedAt DESC")
     fun observeAll(): Flow<List<FavoriteEntity>>
 
+    @Query("SELECT * FROM favorites")
+    suspend fun all(): List<FavoriteEntity>
+
     @Query("SELECT EXISTS(SELECT 1 FROM favorites WHERE animeId = :id)")
     fun observeIsFavorite(id: String): Flow<Boolean>
 

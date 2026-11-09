@@ -128,6 +128,8 @@ class DetailViewModel(private val c: AppContainer, val animeId: String) : ViewMo
                 val first = page(0)
                 val latest = episodes.latest ?: first.items.firstOrNull()?.number
                 episodes = episodes.copy(latest = latest)
+                // Sudah melihat halaman ini → episode terbaru dianggap diketahui (tidak dinotifikasi lagi).
+                if (latest != null && episodes.query.isBlank()) c.episodeWatch.markSeen(animeId, latest)
                 if (episodes.order == EpisodeOrder.OLDEST && episodes.query.isBlank() && first.hasNext && latest != null) {
                     val last = EpisodeLocator(load = { page(it) }).lastPage(latest)
                     lo = last; hi = last

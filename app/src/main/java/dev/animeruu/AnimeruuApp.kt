@@ -92,6 +92,11 @@ class AppContainer(private val app: Application) {
     val mediaDataSource = OkHttpDataSource.Factory(mediaHttp)
     val downloads by lazy { DownloadRepository(app, db.downloads(), mediaDataSource) }
     val updates by lazy { dev.animeruu.update.UpdateManager(app, baseHttp, appScope) }
+    val episodeWatch by lazy { dev.animeruu.feature.EpisodeWatch(app) }
+    val introStore by lazy { dev.animeruu.feature.IntroStore(app) }
+
+    /** Tautan dalam dari notifikasi episode baru → id anime yang harus dibuka. */
+    val openAnimeRequest = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
     val imageLoader: ImageLoader by lazy {
         ImageLoader.Builder(app)
@@ -109,6 +114,11 @@ class AppContainer(private val app: Application) {
         appScope.launch {
             val s = settings.settings.first()
             if (s.autoCheckUpdates && updates.shouldAutoCheck()) updates.check(manual = false)
+        }
+        appScope.launch {
+            settings.settings.map { it.newEpisodeAlerts }.distinctUntilChanged().collect {
+                dev.animeruu.feature.NewEpisodeWorker.schedule(app, it)
+            }
         }
         appScope.launch {
             settings.settings.map { it.wifiOnlyDownloads }.distinctUntilChanged().collect { downloads.setWifiOnly(it) }

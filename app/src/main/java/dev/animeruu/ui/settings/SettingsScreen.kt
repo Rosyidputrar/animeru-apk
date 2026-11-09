@@ -77,6 +77,18 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit) {
             Toggle("Putar episode berikutnya otomatis", "Hitung mundur 5 detik di akhir episode", s.autoplayNext) { scope.launch { c.settings.setAutoplay(it) } }
             Divider()
             Toggle("Picture-in-Picture otomatis", "Video lanjut di jendela kecil saat kamu keluar aplikasi", s.autoPip) { scope.launch { c.settings.setAutoPip(it) } }
+            Divider()
+            Toggle("Lewati intro otomatis", "Bila posisi intro seri itu sudah dipelajari dari lompatanmu sebelumnya", s.autoSkipIntro) { scope.launch { c.settings.setAutoSkipIntro(it) } }
+        }
+        Group("Notifikasi") {
+            Toggle("Episode baru dari favorit", "Dicek di latar sekitar tiap jam saat ada internet", s.newEpisodeAlerts) { scope.launch { c.settings.setNewEpisodeAlerts(it) } }
+            if (s.newEpisodeAlerts) {
+                Divider()
+                Action("Cek sekarang", cleared?.takeIf { it.startsWith("Memeriksa") } ?: "Periksa episode baru semua favorit sekarang juga") {
+                    dev.animeruu.feature.NewEpisodeWorker.runNow(ctx)
+                    cleared = "Memeriksa episode baru… notifikasi muncul bila ada"
+                }
+            }
         }
         Group("Unduhan") {
             Label("Kualitas unduhan", "Kualitas terdekat yang tersedia akan dipakai")
@@ -89,6 +101,10 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit) {
         Group("Data") {
             Action("Hapus riwayat tonton", "Termasuk posisi lanjutkan menonton") {
                 scope.launch { c.library.clearHistory(); cleared = "Riwayat dihapus" }
+            }
+            Divider()
+            Action("Lupakan posisi intro", "Semua seri akan dipelajari ulang") {
+                c.introStore.clear(); cleared = "Posisi intro dilupakan"
             }
             Divider()
             Action("Bersihkan cache gambar", cleared ?: "Poster dan thumbnail akan dimuat ulang") {

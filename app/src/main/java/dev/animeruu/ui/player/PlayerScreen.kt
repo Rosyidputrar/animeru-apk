@@ -144,6 +144,8 @@ fun PlayerScreen(vm: PlayerViewModel, onBack: () -> Unit) {
         view.keepScreenOn = true
         onDispose {
             view.keepScreenOn = false
+            // Kecerahan yang diatur lewat geser hanya berlaku di player.
+            activity?.window?.let { w -> w.attributes = w.attributes.apply { screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE } }
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             activity?.window?.let { WindowCompat.getInsetsController(it, view).show(WindowInsetsCompat.Type.systemBars()) }
         }
@@ -223,7 +225,7 @@ private fun VideoBox(
             if (!scrubbing) position = p.currentPosition.coerceAtLeast(0)
             duration = p.duration.coerceAtLeast(0)
             buffered = p.bufferedPosition
-            delay(if (visible) 200 else 1000)
+            delay(if (visible) 200 else 500)
         }
     }
     // Sembunyikan kontrol otomatis saat sedang memutar dan tidak disentuh.
@@ -263,11 +265,15 @@ private fun VideoBox(
             return@Box
         }
 
-        // Zona gestur: ketuk = tampil/sembunyi, ketuk dua kali kiri/kanan = ±10 dtk.
+        // Zona gestur: ketuk = tampil/sembunyi, ketuk dua kali kiri/kanan = ±10 dtk,
+        // tahan = 2×, geser vertikal (layar penuh) = kecerahan kiri / volume kanan.
         SeekGestureLayer(
             onToggle = { visible = !visible; interact++ },
             onSeek = { delta -> p.seekTo((p.currentPosition + delta).coerceIn(0, p.duration.coerceAtLeast(0))); interact++ },
+            onBoost = { on -> if (vm.phase == PlayerPhase.Playing) vm.boost(on) else vm.boost(false) },
+            swipeEnabled = fullscreen,
         )
+        BoostPill(vm.boosting, Modifier.align(Alignment.TopCenter).padding(top = if (fullscreen) 24.dp else 12.dp))
 
         // Poster selagi memuat stream supaya tidak ada layar hitam kosong.
         val anime = vm.anime
@@ -339,6 +345,18 @@ private fun VideoBox(
             }
         }
 
+        // "Lewati intro": tampil walau kontrol tersembunyi, di atas area seek bar.
+        if (vm.phase == PlayerPhase.Playing && !vm.introSkipped) {
+            val r = vm.intro
+            val show = if (r != null) position in (r.startMs - 1_000)..(r.endMs - 3_000)
+            else duration > 8 * 60_000 && position in 20_000L..180_000L
+            IntroButton(
+                visible = show, learned = r != null,
+                onClick = { vm.skipIntro(); interact++ },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = if (fullscreen) 28.dp else 12.dp, bottom = if (fullscreen) 84.dp else 52.dp),
+            )
+        }
+
         // Pesan sementara (beralih server, kecepatan…)
         AnimatedVisibility(
             vm.toast != null, Modifier.align(Alignment.TopCenter).padding(top = if (fullscreen) 72.dp else 48.dp),
@@ -354,35 +372,6 @@ private fun VideoBox(
             is PlayerPhase.AllFailed -> FailedOverlay(ph.message, vm, onBack, onSettings)
             is PlayerPhase.Ended -> EndedOverlay(vm, ph)
             else -> Unit
-        }
-    }
-}
-
-@Composable
-private fun SeekGestureLayer(onToggle: () -> Unit, onSeek: (Long) -> Unit) {
-    var bubble by remember { mutableStateOf<Pair<Boolean, Int>?>(null) } // (kanan?, detik)
-    LaunchedEffect(bubble) { if (bubble != null) { delay(700); bubble = null } }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        Box(
-            Modifier.fillMaxSize().pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onToggle() },
-                    onDoubleTap = { o ->
-                        val right = o.x > size.width / 2
-                        onSeek(if (right) 10_000 else -10_000)
-                        val prev = bubble
-                        bubble = right to (if (prev != null && prev.first == right) prev.second + 10 else 10)
-                    },
-                )
-            }
-        )
-        val b = bubble
-        AnimatedVisibility(b != null, Modifier.align(if (b?.first == true) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = 40.dp), enter = scaleIn(Motion.press()) + fadeIn(), exit = fadeOut()) {
-            Text(
-                if (b?.first == true) "+${b.second} dtk" else "−${b?.second ?: 10} dtk",
-                style = MaterialTheme.typography.titleMedium, color = Color.White,
-                modifier = Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.18f)).padding(horizontal = 16.dp, vertical = 10.dp),
-            )
         }
     }
 }

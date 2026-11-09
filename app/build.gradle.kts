@@ -34,6 +34,7 @@ android {
         val updateApi = System.getenv("UPDATE_API_BASE")?.takeIf { it.isNotBlank() } ?: "https://api.github.com"
         buildConfigField("String", "UPDATE_API", "\"$updateApi\"")
         resourceConfigurations += listOf("id", "en")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -119,8 +120,14 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.profileinstaller)
     implementation(libs.splashscreen)
+    implementation(libs.work.runtime)
 
     testImplementation(libs.junit)
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation(libs.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext)
+    debugImplementation(libs.compose.ui.test.manifest)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
 }
