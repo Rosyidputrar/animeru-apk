@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Animeruu</string>
+    <string name="download_channel">Unduhan</string>
+    <string name="download_channel_desc">Progres unduhan episode untuk ditonton offline</string>
+</resources>
