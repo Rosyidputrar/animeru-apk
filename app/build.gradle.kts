@@ -24,8 +24,9 @@ android {
         applicationId = "dev.animeruu.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // CI mengisi VERSION_CODE (nomor run) & VERSION_NAME (dari tag v1.2.3); lokal pakai bawaan.
+        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.0.0"
         resourceConfigurations += listOf("id", "en")
     }
 
