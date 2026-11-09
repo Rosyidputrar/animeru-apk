@@ -233,3 +233,30 @@ siap sebagai berikutnya. Riwayat dan posisi resume tersimpan (09).
   Tautan banner promo juga begitu.
 - Tidak ada Picture-in-Picture dan tidak ada daftar "episode sebelumnya" di player (API hanya
   memberi `episode_next`). Episode lain dipilih dari halaman detail.
+
+---
+
+## Build otomatis (GitHub Actions)
+
+Workflow `.github/workflows/build.yml` berjalan pada setiap push ke `main`, setiap pull request, dan bisa dijalankan manual (*Actions → Build APK → Run workflow*):
+
+1. menjalankan unit test,
+2. membangun APK release (R8),
+3. mengunggahnya sebagai **artifact** `Animeruu-<versi>` (tab *Actions* → run → *Artifacts*, disimpan 30 hari).
+
+**Rilis:** push tag `v*`, maka APK langsung dilampirkan ke **GitHub Release**:
+```bash
+git tag v1.0.1 && git push origin v1.0.1
+```
+`versionName` diambil dari tag (`1.0.1`), `versionCode` = nomor run (selalu naik, jadi APK baru bisa menimpa yang lama).
+
+**Kunci tanda tangan** (*Settings → Secrets and variables → Actions*):
+
+| Secret | Isi |
+|---|---|
+| `KEYSTORE_BASE64` | `base64 -w0 animeruu-release.jks` |
+| `KEYSTORE_PASSWORD` | password keystore |
+| `KEY_ALIAS` | `animeruu` |
+| `KEY_PASSWORD` | password key |
+
+Tanpa secrets build tetap jalan, tetapi APK ditandatangani debug key (tidak bisa meng-update APK yang ditandatangani kunci release, dan sebaliknya). Gunakan kunci yang **sama** untuk setiap rilis.
