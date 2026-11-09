@@ -243,6 +243,20 @@ siap sebagai berikutnya. Riwayat dan posisi resume tersimpan (09).
 
 ---
 
+## Fitur v1.3.0 — notifikasi media & audio di latar
+
+Player dibungkus **Media3 `MediaSession`** dan dipasang di **`PlaybackService` (`MediaSessionService`,
+`foregroundServiceType=mediaPlayback`)**. Media3 menangani notifikasi media (poster dari Kitsu, judul,
+episode), kontrol layar kunci/quick settings, tombol earphone/Bluetooth, dan status foreground.
+Player tetap dimiliki `PlayerViewModel` (satu sumber kebenaran). Service hanya meminjam session lewat
+`PlaybackSessions`, dan session/controller/player dilepas di `onCleared`. Sebuah `ForwardingPlayer`
+memetakan *next* ke episode berikutnya, dan tombol kustom ⏪10/⏩10 memakai `COMMAND_SEEK_BACK/FORWARD`.
+
+**Audio di latar** (opsi): saat `ON_STOP` tanpa PiP, track video dimatikan
+(`setTrackTypeDisabled(VIDEO)`) dan audio lanjut; saat `ON_START` video dinyalakan lagi. Menutup PiP
+dikenali (masih dalam mode PiP saat `ON_STOP`, atau PiP baru berakhir < 1,5 dtk) dan selalu menjeda.
+`onTaskRemoved` menghentikan pemutaran supaya tidak ada audio hantu.
+
 ## Fitur v1.2.0
 
 **Notifikasi episode baru (favorit).** WorkManager memeriksa episode terbaru tiap anime favorit (seri)

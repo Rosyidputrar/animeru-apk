@@ -22,6 +22,8 @@ data class Settings(
     val newEpisodeAlerts: Boolean = true,
     /** Lewati intro otomatis bila posisinya sudah dipelajari untuk seri itu. */
     val autoSkipIntro: Boolean = false,
+    /** Lanjutkan suara saat aplikasi ditinggal / layar dikunci (tanpa PiP). */
+    val backgroundAudio: Boolean = false,
 )
 
 private val Context.store by preferencesDataStore("settings")
@@ -35,6 +37,7 @@ class SettingsRepository(private val context: Context) {
     private val kUpd = booleanPreferencesKey("auto_update_check")
     private val kNewEp = booleanPreferencesKey("new_episode_alerts")
     private val kAutoIntro = booleanPreferencesKey("auto_skip_intro")
+    private val kBgAudio = booleanPreferencesKey("background_audio")
 
     val settings: Flow<Settings> = context.store.data.map {
         Settings(
@@ -46,6 +49,7 @@ class SettingsRepository(private val context: Context) {
             autoCheckUpdates = it[kUpd] ?: true,
             newEpisodeAlerts = it[kNewEp] ?: true,
             autoSkipIntro = it[kAutoIntro] ?: false,
+            backgroundAudio = it[kBgAudio] ?: false,
         )
     }
 
@@ -57,4 +61,5 @@ class SettingsRepository(private val context: Context) {
     suspend fun setAutoCheckUpdates(v: Boolean) = context.store.edit { it[kUpd] = v }
     suspend fun setNewEpisodeAlerts(v: Boolean) = context.store.edit { it[kNewEp] = v }
     suspend fun setAutoSkipIntro(v: Boolean) = context.store.edit { it[kAutoIntro] = v }
+    suspend fun setBackgroundAudio(v: Boolean) = context.store.edit { it[kBgAudio] = v }
 }
