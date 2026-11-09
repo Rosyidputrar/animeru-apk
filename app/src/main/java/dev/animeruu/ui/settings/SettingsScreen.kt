@@ -70,6 +70,8 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit) {
             }
             Divider()
             Toggle("Putar episode berikutnya otomatis", "Hitung mundur 5 detik di akhir episode", s.autoplayNext) { scope.launch { c.settings.setAutoplay(it) } }
+            Divider()
+            Toggle("Picture-in-Picture otomatis", "Video lanjut di jendela kecil saat kamu keluar aplikasi", s.autoPip) { scope.launch { c.settings.setAutoPip(it) } }
         }
         Group("Unduhan") {
             Label("Kualitas unduhan", "Kualitas terdekat yang tersedia akan dipakai")

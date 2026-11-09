@@ -24,6 +24,8 @@
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:launchMode="singleTask"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:theme="@style/Theme.Animeruu.Splash"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

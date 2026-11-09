@@ -14,6 +14,8 @@ data class Settings(
     val downloadHeight: Int = 480,
     val wifiOnlyDownloads: Boolean = true,
     val autoplayNext: Boolean = true,
+    /** Masuk Picture-in-Picture otomatis saat keluar aplikasi ketika video sedang diputar. */
+    val autoPip: Boolean = true,
 )
 
 private val Context.store by preferencesDataStore("settings")
@@ -23,6 +25,7 @@ class SettingsRepository(private val context: Context) {
     private val kDlQuality = intPreferencesKey("dl_quality")
     private val kWifi = booleanPreferencesKey("wifi_only")
     private val kAutoplay = booleanPreferencesKey("autoplay")
+    private val kPip = booleanPreferencesKey("auto_pip")
 
     val settings: Flow<Settings> = context.store.data.map {
         Settings(
@@ -30,6 +33,7 @@ class SettingsRepository(private val context: Context) {
             downloadHeight = it[kDlQuality] ?: 480,
             wifiOnlyDownloads = it[kWifi] ?: true,
             autoplayNext = it[kAutoplay] ?: true,
+            autoPip = it[kPip] ?: true,
         )
     }
 
@@ -37,4 +41,5 @@ class SettingsRepository(private val context: Context) {
     suspend fun setDownloadQuality(h: Int) = context.store.edit { it[kDlQuality] = h }
     suspend fun setWifiOnly(v: Boolean) = context.store.edit { it[kWifi] = v }
     suspend fun setAutoplay(v: Boolean) = context.store.edit { it[kAutoplay] = v }
+    suspend fun setAutoPip(v: Boolean) = context.store.edit { it[kPip] = v }
 }

@@ -14,6 +14,20 @@ import dev.animeruu.ui.nav.AnimeruuApp
 import dev.animeruu.ui.theme.AnimeruuTheme
 
 class MainActivity : ComponentActivity() {
+    /**
+     * Diisi layar player: mengembalikan parameter PiP bila saat ini layak masuk PiP
+     * (video sedang diputar & pengaturan aktif), atau null. Android 12+ memakai
+     * auto-enter bawaan sistem; hook ini hanya untuk Android 8–11.
+     */
+    var pipRequest: (() -> android.app.PictureInPictureParams?)? = null
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < 31) {
+            pipRequest?.invoke()?.let { runCatching { enterPictureInPictureMode(it) } }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
