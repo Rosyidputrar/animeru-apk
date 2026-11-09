@@ -122,6 +122,12 @@ pernah memuat halaman berurutan untuk mencari sesuatu.**
 - **Episode berikutnya:** dari `episode_next`. Di akhir episode muncul cincin hitung mundur
   5 dtk (bisa dibatalkan, dan bisa dimatikan di Pengaturan). Episode berikutnya dimuat di
   **player yang sama**.
+- **Picture-in-Picture otomatis:** bila video sedang diputar dan pengguna menekan Home/menggeser
+  keluar, video pindah ke jendela PiP dan terus berputar. Android 12+ memakai
+  `setAutoEnterEnabled` (animasi tumbuh dari posisi video lewat `sourceRectHint`), Android 8–11
+  memakai `onUserLeaveHint`. Jendela PiP hanya menampilkan video, dengan tombol sistem
+  ⏪10 / ▶⏸ / ⏩10, dan rasio mengikuti video. Auto-next tetap jalan di dalam PiP. Menutup PiP
+  akan menjeda video dan menyimpan posisi. Bisa dimatikan di Pengaturan.
 - **Offline:** episode yang sudah terunduh ditaruh paling depan rantai. Bila API stream
   gagal (offline), player tetap memutar dari unduhan.
 
@@ -231,8 +237,8 @@ siap sebagai berikutnya. Riwayat dan posisi resume tersimpan (09).
   akan "Gagal — ketuk ulang".
 - Tombol trailer membuka tautan YouTube di aplikasi/peramban sistem (hanya atas aksi pengguna).
   Tautan banner promo juga begitu.
-- Tidak ada Picture-in-Picture dan tidak ada daftar "episode sebelumnya" di player (API hanya
-  memberi `episode_next`). Episode lain dipilih dari halaman detail.
+- Tidak ada daftar "episode sebelumnya" di player (API hanya memberi `episode_next`).
+  Episode lain dipilih dari halaman detail.
 
 ---
 

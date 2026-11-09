@@ -102,6 +102,11 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import dev.animeruu.core.formatDuration
+import dev.animeruu.container
+import dev.animeruu.data.repo.Settings
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import dev.animeruu.domain.StreamSource
 import dev.animeruu.ui.components.AnimeArt
 import dev.animeruu.ui.components.ArtKind
@@ -154,23 +159,33 @@ fun PlayerScreen(vm: PlayerViewModel, onBack: () -> Unit) {
         activity?.requestedOrientation =
             if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
     }
-    BackHandler(landscape) { toggleFullscreen() }
-
     var sheet by remember { mutableStateOf(false) }
+    val settings by ctx.container.settings.settings.collectAsStateWithLifecycle(Settings())
+    var videoRect by remember { mutableStateOf<android.graphics.Rect?>(null) }
+    val inPip = rememberPipState(vm, enabled = settings.autoPip && vm.phase == PlayerPhase.Playing, sourceRect = videoRect)
+    // Batas video di jendela → animasi masuk PiP tumbuh/menyusut dari posisi video.
+    val trackBounds = Modifier.onGloballyPositioned { c ->
+        val b = c.boundsInWindow()
+        videoRect = android.graphics.Rect(b.left.toInt(), b.top.toInt(), b.right.toInt(), b.bottom.toInt())
+    }
+
+    BackHandler(landscape && !inPip) { toggleFullscreen() }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (landscape) {
-            VideoBox(vm, true, onBack = { toggleFullscreen() }, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true }, modifier = Modifier.fillMaxSize())
+        if (inPip) {
+            VideoBox(vm, true, onBack = onBack, onFullscreen = {}, onSettings = {}, modifier = Modifier.fillMaxSize(), pip = true)
+        } else if (landscape) {
+            VideoBox(vm, true, onBack = { toggleFullscreen() }, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true }, modifier = Modifier.fillMaxSize().then(trackBounds))
         } else {
             Column(Modifier.fillMaxSize().background(Palette.Bg)) {
                 Box(Modifier.background(Color.Black).statusBarsPadding()) {
-                    VideoBox(vm, false, onBack = onBack, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+                    VideoBox(vm, false, onBack = onBack, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(trackBounds))
                 }
                 InfoPanel(vm, onSettings = { sheet = true })
             }
         }
     }
-    if (sheet) SourceSheet(vm) { sheet = false }
+    if (sheet && !inPip) SourceSheet(vm) { sheet = false }
 }
 
 @Composable
@@ -181,6 +196,8 @@ private fun VideoBox(
     onFullscreen: () -> Unit,
     onSettings: () -> Unit,
     modifier: Modifier,
+    /** Di jendela PiP: hanya video (+ indikator buffering); kontrol lewat tombol sistem PiP. */
+    pip: Boolean = false,
 ) {
     val p = vm.player
     var visible by remember { mutableStateOf(true) }
@@ -229,6 +246,22 @@ private fun VideoBox(
             onRelease = { it.player = null },
             modifier = Modifier.fillMaxSize(),
         )
+
+        if (pip) {
+            if ((buffering || vm.phase == PlayerPhase.LoadingStream) && vm.phase !is PlayerPhase.AllFailed) {
+                CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), color = Color.White, strokeWidth = 2.5.dp, strokeCap = StrokeCap.Round)
+            }
+            when (val ph = vm.phase) {
+                // Episode berikutnya tetap jalan otomatis di dalam PiP.
+                is PlayerPhase.Ended -> if (ph.next != null && vm.autoplay) LaunchedEffect(ph.next.id) { delay(2500); vm.playNext() }
+                is PlayerPhase.AllFailed -> Text(
+                    "Video gagal diputar", style = MaterialTheme.typography.labelMedium, color = Color.White,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+                else -> Unit
+            }
+            return@Box
+        }
 
         // Zona gestur: ketuk = tampil/sembunyi, ketuk dua kali kiri/kanan = ±10 dtk.
         SeekGestureLayer(
