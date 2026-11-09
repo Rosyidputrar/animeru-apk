@@ -27,6 +27,8 @@ class UpdateLogicTest {
         assertEquals("1.1.0", r.version)
         assertEquals("abcd", r.sha256)
         assertEquals("What's Changed\n• PiP", r.notes)
+        assertEquals("• Ada tombol Cek sekarang di Pengaturan → Notifikasi.", dev.animeruu.update.cleanNotes("- Ada tombol *Cek sekarang* di `Pengaturan` → Notifikasi."))
+        assertEquals("ukuran 2*3 tetap", dev.animeruu.update.cleanNotes("ukuran 2*3 tetap"))
         assertNull(GhRelease("v1.2.0", assets = emptyList()).toInfo())
         assertNull(GhRelease("v1.2.0", prerelease = true, assets = listOf(apk)).toInfo())
     }
