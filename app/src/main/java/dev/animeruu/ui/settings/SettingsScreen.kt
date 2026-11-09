@@ -78,6 +78,8 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit) {
             Divider()
             Toggle("Picture-in-Picture otomatis", "Video lanjut di jendela kecil saat kamu keluar aplikasi", s.autoPip) { scope.launch { c.settings.setAutoPip(it) } }
             Divider()
+            Toggle("Putar audio di latar", "Suara tetap jalan saat keluar aplikasi atau layar dikunci (bila PiP tidak dipakai). Lebih boros baterai & kuota.", s.backgroundAudio) { scope.launch { c.settings.setBackgroundAudio(it) } }
+            Divider()
             Toggle("Lewati intro otomatis", "Bila posisi intro seri itu sudah dipelajari dari lompatanmu sebelumnya", s.autoSkipIntro) { scope.launch { c.settings.setAutoSkipIntro(it) } }
         }
         Group("Notifikasi") {

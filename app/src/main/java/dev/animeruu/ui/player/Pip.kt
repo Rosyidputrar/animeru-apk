@@ -27,6 +27,11 @@ import androidx.media3.common.VideoSize
 import dev.animeruu.MainActivity
 import dev.animeruu.R
 
+/** Kapan jendela PiP terakhir ditutup — membedakan "tutup PiP" (= berhenti) dari "keluar aplikasi". */
+object PipTracker {
+    @Volatile var lastExitAt = 0L
+}
+
 private const val ACTION_PIP = "dev.animeruu.action.PIP"
 private const val EXTRA_CMD = "cmd"
 private const val CMD_TOGGLE = 1
@@ -117,7 +122,10 @@ fun rememberPipState(vm: PlayerViewModel, enabled: Boolean, sourceRect: android.
 
     // Mode PiP masuk/keluar.
     DisposableEffect(activity) {
-        val l = Consumer<PictureInPictureModeChangedInfo> { inPip = it.isInPictureInPictureMode }
+        val l = Consumer<PictureInPictureModeChangedInfo> {
+            if (inPip && !it.isInPictureInPictureMode) PipTracker.lastExitAt = android.os.SystemClock.elapsedRealtime()
+            inPip = it.isInPictureInPictureMode
+        }
         activity.addOnPictureInPictureModeChangedListener(l)
         onDispose { activity.removeOnPictureInPictureModeChangedListener(l) }
     }

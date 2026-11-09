@@ -13,6 +13,16 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.ForwardingPlayer
+import androidx.media3.session.MediaController
+import androidx.media3.session.MediaSession
+import androidx.media3.session.SessionToken
+import android.app.PendingIntent
+import android.content.ComponentName
+import android.content.Intent
+import android.net.Uri
+import dev.animeruu.playback.PlaybackService
+import dev.animeruu.playback.PlaybackSessions
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -142,6 +152,65 @@ class PlayerViewModel(
         }
     }
 
+    // ---- MediaSession: notifikasi media, layar kunci, tombol earphone/Bluetooth ----
+    /** Membungkus player: tombol "next" di notifikasi/earphone = episode berikutnya. */
+    private val sessionPlayer = object : ForwardingPlayer(player) {
+        // "Sebelumnya" (= ulang dari awal) disembunyikan; tempatnya dipakai ⏪10 / ⏩10.
+        override fun getAvailableCommands(): Player.Commands = super.getAvailableCommands().buildUpon()
+            .addAll(Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM, Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD)
+            .removeAll(Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+            .build()
+        override fun isCommandAvailable(command: Int) = availableCommands.contains(command)
+        override fun hasNextMediaItem() = stream?.next != null
+        override fun seekToNext() { if (stream?.next != null) playNext() }
+        override fun seekToNextMediaItem() = seekToNext()
+    }
+
+    private val session: MediaSession = MediaSession.Builder(app, sessionPlayer)
+        .setId("animeruu-${System.nanoTime()}")
+        .setSessionActivity(
+            PendingIntent.getActivity(
+                app, 0,
+                Intent(app, dev.animeruu.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        )
+        .setCustomLayout(dev.animeruu.playback.PlaybackCommands.layout())
+        .setCallback(object : MediaSession.Callback {
+            override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult =
+                MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                    .setAvailableSessionCommands(
+                        MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+                            .add(dev.animeruu.playback.PlaybackCommands.back)
+                            .add(dev.animeruu.playback.PlaybackCommands.forward)
+                            .build()
+                    )
+                    .setCustomLayout(dev.animeruu.playback.PlaybackCommands.layout())
+                    .build()
+
+            override fun onCustomCommand(
+                session: MediaSession,
+                controller: MediaSession.ControllerInfo,
+                customCommand: androidx.media3.session.SessionCommand,
+                args: android.os.Bundle,
+            ): com.google.common.util.concurrent.ListenableFuture<androidx.media3.session.SessionResult> {
+                when (customCommand.customAction) {
+                    dev.animeruu.playback.PlaybackCommands.SEEK_BACK -> player.seekBack()
+                    dev.animeruu.playback.PlaybackCommands.SEEK_FORWARD -> player.seekForward()
+                }
+                return com.google.common.util.concurrent.Futures.immediateFuture(
+                    androidx.media3.session.SessionResult(androidx.media3.session.SessionResult.RESULT_SUCCESS)
+                )
+            }
+        })
+        .build().also { PlaybackSessions.current = it }
+
+    /** Menyambung ke PlaybackService → service hidup & notifikasi media tampil selama layar player ada. */
+    private val controllerFuture = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+
+    /** true selama suara diputar di latar (track video dimatikan untuk hemat baterai). */
+    private var backgroundAudioActive = false
+
     init {
         player.addListener(listener)
         viewModelScope.launch {
@@ -262,7 +331,16 @@ class PlayerViewModel(
             .setUri(src.url)
             .setCustomCacheKey(src.url)
             .setMediaId(episodeId)
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(ep?.title).setArtist(anime?.title).build())
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(ep?.title)
+                    .setDisplayTitle(ep?.title)
+                    .setArtist(anime?.title)
+                    .setSubtitle(anime?.title)
+                    // Poster Kitsu lebih andal daripada CDN sumber untuk notifikasi & layar kunci.
+                    .setArtworkUri((anime?.title?.let { c.posters.peek(it)?.posterUrl } ?: anime?.posterUrl)?.let(Uri::parse))
+                    .build()
+            )
             .build()
         player.setMediaItem(item, positionMs)
         player.playbackParameters = player.playbackParameters.withSpeed(speed)
@@ -369,9 +447,27 @@ class PlayerViewModel(
         c.appScope.launch { c.library.record(a, ep, pos, dur) }
     }
 
-    fun onBackground() {
+    /**
+     * Aplikasi ke latar / layar dikunci (bukan PiP).
+     * @param keepAudio true bila "Putar audio di latar" aktif → suara lanjut, video tidak didekode.
+     */
+    fun onBackground(keepAudio: Boolean) {
         saveProgress()
-        player.pause()
+        if (keepAudio && player.isPlaying) {
+            backgroundAudioActive = true
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build()
+        } else {
+            player.pause()
+        }
+    }
+
+    /** Kembali ke depan: nyalakan lagi track video bila tadi diputar sebagai audio. */
+    fun onForeground() {
+        if (!backgroundAudioActive) return
+        backgroundAudioActive = false
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false).build()
     }
 
     override fun onCleared() {
@@ -379,6 +475,11 @@ class PlayerViewModel(
         watchdog?.cancel()
         saver?.cancel()
         player.removeListener(listener)
+        if (PlaybackSessions.current === session) PlaybackSessions.current = null
+        MediaController.releaseFuture(controllerFuture)
+        session.release()
         player.release()
+        // Tanpa session, service tidak punya tugas lagi → hentikan supaya tidak ada proses menggantung.
+        runCatching { app.stopService(Intent(app, PlaybackService::class.java)) }
     }
 }

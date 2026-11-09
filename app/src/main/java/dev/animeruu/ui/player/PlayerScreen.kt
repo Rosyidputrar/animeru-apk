@@ -102,6 +102,7 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import dev.animeruu.core.formatDuration
+import kotlinx.coroutines.flow.map
 import dev.animeruu.container
 import dev.animeruu.data.repo.Settings
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -152,8 +153,21 @@ fun PlayerScreen(vm: PlayerViewModel, onBack: () -> Unit) {
     }
     // Pause + simpan posisi saat aplikasi ke latar belakang.
     val owner = LocalLifecycleOwner.current
+    val bgAudio by ctx.container.settings.settings.map { it.backgroundAudio }.collectAsStateWithLifecycle(false)
+    val bgAudioState = androidx.compose.runtime.rememberUpdatedState(bgAudio)
     DisposableEffect(owner) {
-        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_STOP) vm.onBackground() }
+        val obs = LifecycleEventObserver { _, e ->
+            when (e) {
+                Lifecycle.Event.ON_STOP -> {
+                    // Menutup jendela PiP = keinginan berhenti → selalu jeda.
+                    val pipDismissed = activity?.isInPictureInPictureMode == true ||
+                        android.os.SystemClock.elapsedRealtime() - PipTracker.lastExitAt < 1_500
+                    vm.onBackground(keepAudio = bgAudioState.value && !pipDismissed)
+                }
+                Lifecycle.Event.ON_START -> vm.onForeground()
+                else -> Unit
+            }
+        }
         owner.lifecycle.addObserver(obs)
         onDispose { owner.lifecycle.removeObserver(obs) }
     }
