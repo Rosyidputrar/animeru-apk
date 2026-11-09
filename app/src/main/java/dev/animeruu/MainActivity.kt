@@ -57,6 +57,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleUpdateIntent(intent: android.content.Intent?) {
+        intent?.getStringExtra(dev.animeruu.feature.NewEpisodeWorker.EXTRA_OPEN_ANIME)?.let {
+            intent.removeExtra(dev.animeruu.feature.NewEpisodeWorker.EXTRA_OPEN_ANIME)
+            container.openAnimeRequest.value = it
+        }
         if (intent?.getBooleanExtra(dev.animeruu.update.UpdateManager.EXTRA_OPEN_UPDATE, false) == true) {
             container.updates.cancelReadyNotification()
             container.updates.requestSheet()

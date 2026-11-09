@@ -18,6 +18,10 @@ data class Settings(
     val autoPip: Boolean = true,
     /** Cek GitHub Releases otomatis (maks. 2× sehari) saat aplikasi dibuka. */
     val autoCheckUpdates: Boolean = true,
+    /** Notifikasi episode baru untuk anime favorit (cek latar ±1 jam sekali). */
+    val newEpisodeAlerts: Boolean = true,
+    /** Lewati intro otomatis bila posisinya sudah dipelajari untuk seri itu. */
+    val autoSkipIntro: Boolean = false,
 )
 
 private val Context.store by preferencesDataStore("settings")
@@ -29,6 +33,8 @@ class SettingsRepository(private val context: Context) {
     private val kAutoplay = booleanPreferencesKey("autoplay")
     private val kPip = booleanPreferencesKey("auto_pip")
     private val kUpd = booleanPreferencesKey("auto_update_check")
+    private val kNewEp = booleanPreferencesKey("new_episode_alerts")
+    private val kAutoIntro = booleanPreferencesKey("auto_skip_intro")
 
     val settings: Flow<Settings> = context.store.data.map {
         Settings(
@@ -38,6 +44,8 @@ class SettingsRepository(private val context: Context) {
             autoplayNext = it[kAutoplay] ?: true,
             autoPip = it[kPip] ?: true,
             autoCheckUpdates = it[kUpd] ?: true,
+            newEpisodeAlerts = it[kNewEp] ?: true,
+            autoSkipIntro = it[kAutoIntro] ?: false,
         )
     }
 
@@ -47,4 +55,6 @@ class SettingsRepository(private val context: Context) {
     suspend fun setAutoplay(v: Boolean) = context.store.edit { it[kAutoplay] = v }
     suspend fun setAutoPip(v: Boolean) = context.store.edit { it[kPip] = v }
     suspend fun setAutoCheckUpdates(v: Boolean) = context.store.edit { it[kUpd] = v }
+    suspend fun setNewEpisodeAlerts(v: Boolean) = context.store.edit { it[kNewEp] = v }
+    suspend fun setAutoSkipIntro(v: Boolean) = context.store.edit { it[kAutoIntro] = v }
 }

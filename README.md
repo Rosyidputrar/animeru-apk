@@ -178,7 +178,8 @@ tetap menghasilkan APK yang bisa diinstal (ditandatangani debug key).
 
 Tes:
 ```bash
-./gradlew :app:testReleaseUnitTest                         # unit (SourceChain)
+./gradlew :app:testReleaseUnitTest                         # unit (SourceChain, Version, IntroLearner, …)
+./gradlew :app:connectedDebugAndroidTest                   # instrumentasi (gestur pemutar) — butuh perangkat/emulator
 LIVE_API=1 ./gradlew :app:testReleaseUnitTest -i           # + uji terhadap API production
 ```
 
@@ -241,6 +242,25 @@ siap sebagai berikutnya. Riwayat dan posisi resume tersimpan (09).
   Episode lain dipilih dari halaman detail.
 
 ---
+
+## Fitur v1.2.0
+
+**Notifikasi episode baru (favorit).** WorkManager memeriksa episode terbaru tiap anime favorit (seri)
+sekitar tiap jam, hanya saat ada internet, dengan maksimal 3 permintaan paralel. Run pertama per
+judul hanya menyimpan *baseline*, jadi tidak ada notifikasi palsu. Membuka halaman detail juga
+menandai episode terbaru "sudah diketahui". Notifikasi berisi poster dan membuka halaman anime itu.
+Bisa dimatikan; ada tombol *Cek sekarang* di Pengaturan.
+
+**Lewati intro yang belajar sendiri.** API tidak menyediakan data intro, jadi aplikasi belajar dari
+pengguna (`IntroLearner`). Rangkaian seek maju yang bersambung (ketuk-dua-kali berulang atau satu
+geser seek bar) di 10 menit pertama dengan total 50–180 dtk dianggap melewati intro, lalu disimpan per
+seri (rata-rata berbobot antar episode). Selama belum ada data, tombol "Lewati 85 dtk" muncul di
+0:20–3:00 untuk episode > 8 menit. Opsi *Lewati intro otomatis* ada di Pengaturan. Lompatan yang
+berakhir sebelum intro dimulai tidak dipelajari.
+
+**Gestur pemutar.** Tahan = 2× selama ditahan, dengan haptic. Geser vertikal (layar penuh): kiri =
+kecerahan, kanan = volume. Tap vs tahan diputuskan dari stempel waktu event, bukan timer, sehingga
+tetap benar walau main thread tersendat. Diuji dengan tes instrumentasi `GestureLayerTest`.
 
 ## Pembaruan dalam aplikasi
 

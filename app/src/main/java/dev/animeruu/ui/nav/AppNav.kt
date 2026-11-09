@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -163,6 +164,14 @@ fun AnimeruuApp() {
                 notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
+    }
+
+    // Notifikasi "episode baru" → buka halaman detail anime itu.
+    val openReq by ctx.container.openAnimeRequest.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(openReq) {
+        val id = openReq ?: return@LaunchedEffect
+        ctx.container.openAnimeRequest.value = null
+        nav.navigate(DetailRoute(id)) { launchSingleTop = true }
     }
 
     Box(Modifier.fillMaxSize().background(Palette.Bg)) {

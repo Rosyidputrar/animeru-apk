@@ -93,6 +93,21 @@ class PlayerViewModel(
     var offline by mutableStateOf(false)
         private set
 
+    // ---- Lewati intro (dipelajari per seri) ----
+    /** Rentang intro yang sudah dipelajari untuk seri ini (null = belum). */
+    var intro by mutableStateOf(c.introStore.get(animeId))
+        private set
+    /** true setelah intro episode ini dilewati (tombol disembunyikan). */
+    var introSkipped by mutableStateOf(false)
+        private set
+    private val learner = dev.animeruu.feature.IntroLearner()
+    private var programmaticSeek = false
+    private var autoSkipIntro = false
+
+    // ---- Tahan untuk 2× ----
+    var boosting by mutableStateOf(false)
+        private set
+
     private val failed = HashSet<String>()
     private var watchdog: Job? = null
     private var saver: Job? = null
@@ -100,6 +115,12 @@ class PlayerViewModel(
     private var pendingSeek: Long = 0
 
     private val listener = object : Player.Listener {
+        override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+            if (reason != Player.DISCONTINUITY_REASON_SEEK) return
+            if (programmaticSeek) { programmaticSeek = false; return }
+            learner.onSeek(oldPosition.positionMs, newPosition.positionMs, android.os.SystemClock.elapsedRealtime())
+        }
+
         override fun onPlayerError(error: PlaybackException) {
             onSourceFailed("galat ${error.errorCodeName}")
         }
@@ -123,7 +144,36 @@ class PlayerViewModel(
 
     init {
         player.addListener(listener)
-        viewModelScope.launch { autoplay = c.settings.settings.first().autoplayNext }
+        viewModelScope.launch {
+            val st = c.settings.settings.first()
+            autoplay = st.autoplayNext
+            autoSkipIntro = st.autoSkipIntro
+        }
+        // Detak 0,5 dtk: selesaikan pembelajaran intro & lewati otomatis bila diaktifkan.
+        viewModelScope.launch {
+            while (isActive) {
+                delay(500)
+                learner.poll(android.os.SystemClock.elapsedRealtime())?.takeIf { learned ->
+                    // Melompat MENUJU intro (berakhir sebelum intro dimulai) bukan melewati intro.
+                    val known = intro
+                    known == null || learned.endMs > known.startMs + 10_000
+                }?.let { learned ->
+                    val first = intro == null
+                    intro = c.introStore.learn(animeId, learned)
+                    introSkipped = true
+                    flash(if (first) "Posisi intro diingat untuk seri ini" else "Posisi intro diperbarui")
+                }
+                val r = intro
+                if (autoSkipIntro && r != null && !introSkipped && phase == PlayerPhase.Playing && player.isPlaying) {
+                    val pos = player.currentPosition
+                    if (pos in (r.startMs - 500)..(r.startMs + 4_000)) {
+                        seekProgrammatic(r.endMs)
+                        introSkipped = true
+                        flash("Intro dilewati")
+                    }
+                }
+            }
+        }
         load(startEpisodeId)
         saver = viewModelScope.launch {
             while (isActive) {
@@ -135,6 +185,8 @@ class PlayerViewModel(
 
     fun load(epId: String) {
         saveProgress()
+        learner.reset()
+        introSkipped = false
         episodeId = epId
         failed.clear()
         watchdog?.cancel()
@@ -259,6 +311,32 @@ class PlayerViewModel(
         if (chain.isEmpty()) { load(episodeId); return }
         failed.clear()
         start(chain.first(), pendingSeek)
+    }
+
+    private fun seekProgrammatic(to: Long) {
+        programmaticSeek = true
+        player.seekTo(to)
+    }
+
+    /**
+     * Tombol "Lewati intro". Bila posisi intro sudah dipelajari → lompat ke akhirnya.
+     * Bila belum → lompat 85 dtk (panjang opening umum) dan simpan sebagai tebakan awal,
+     * yang akan diperhalus oleh lompatan manual berikutnya.
+     */
+    fun skipIntro() {
+        val pos = player.currentPosition
+        val r = intro
+        val target = r?.endMs?.takeIf { it > pos } ?: (pos + 85_000)
+        if (r == null && pos <= 10 * 60_000) intro = c.introStore.learn(animeId, dev.animeruu.feature.IntroRange(pos, pos + 85_000))
+        seekProgrammatic(target.coerceAtMost((player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE) - 1_000))
+        introSkipped = true
+    }
+
+    /** Tahan layar = 2× sementara; lepas = kembali ke kecepatan sebelumnya. */
+    fun boost(on: Boolean) {
+        if (on == boosting) return
+        boosting = on
+        player.playbackParameters = player.playbackParameters.withSpeed(if (on) 2f else speed)
     }
 
     fun changeSpeed(v: Float) {

@@ -17,6 +17,9 @@ coil = "2.7.0"
 profileinstaller = "1.4.1"
 splashscreen = "1.0.1"
 junit = "4.13.2"
+work = "2.10.0"
+androidxTestRunner = "1.6.2"
+androidxTestExt = "1.2.1"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -51,6 +54,11 @@ coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
 profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller" }
 splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "splashscreen" }
 junit = { module = "junit:junit", version.ref = "junit" }
+compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
+androidx-test-ext = { module = "androidx.test.ext:junit", version.ref = "androidxTestExt" }
+work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
