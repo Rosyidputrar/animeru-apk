@@ -48,16 +48,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CloudOff
-import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SkipNext
-import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -91,6 +89,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -109,6 +109,8 @@ import dev.animeruu.data.repo.Settings
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.layout
+import kotlin.math.roundToInt
 import dev.animeruu.domain.StreamSource
 import dev.animeruu.ui.components.AnimeArt
 import dev.animeruu.ui.components.ArtKind
@@ -187,16 +189,24 @@ fun PlayerScreen(vm: PlayerViewModel, onBack: () -> Unit) {
     }
 
     BackHandler(landscape && !inPip) { toggleFullscreen() }
+    // Kunci layar hanya untuk layar penuh yang sedang memutar; lepas otomatis di luar itu.
+    var locked by remember { mutableStateOf(false) }
+    LaunchedEffect(landscape, inPip, vm.phase) { if (!landscape || inPip || vm.phase != PlayerPhase.Playing) locked = false }
+    val stepMs = settings.seekStepSec * 1000L
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (inPip) {
             VideoBox(vm, true, onBack = onBack, onFullscreen = {}, onSettings = {}, modifier = Modifier.fillMaxSize(), pip = true)
         } else if (landscape) {
-            VideoBox(vm, true, onBack = { toggleFullscreen() }, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true }, modifier = Modifier.fillMaxSize().then(trackBounds))
+            VideoBox(
+                vm, true, onBack = { toggleFullscreen() }, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true },
+                modifier = Modifier.fillMaxSize().then(trackBounds), seekStepMs = stepMs,
+                locked = locked, onLock = { locked = it },
+            )
         } else {
             Column(Modifier.fillMaxSize().background(Palette.Bg)) {
                 Box(Modifier.background(Color.Black).statusBarsPadding()) {
-                    VideoBox(vm, false, onBack = onBack, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(trackBounds))
+                    VideoBox(vm, false, onBack = onBack, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(trackBounds), seekStepMs = stepMs)
                 }
                 InfoPanel(vm, onSettings = { sheet = true })
             }
@@ -215,6 +225,11 @@ private fun VideoBox(
     modifier: Modifier,
     /** Di jendela PiP: hanya video (+ indikator buffering); kontrol lewat tombol sistem PiP. */
     pip: Boolean = false,
+    /** Lompatan ketuk-dua-kali & tombol mundur/maju (ms). */
+    seekStepMs: Long = 10_000,
+    /** Layar terkunci: semua gestur & kontrol dimatikan sampai gembok diketuk. */
+    locked: Boolean = false,
+    onLock: (Boolean) -> Unit = {},
 ) {
     val p = vm.player
     var visible by remember { mutableStateOf(true) }
@@ -282,11 +297,13 @@ private fun VideoBox(
 
         // Zona gestur: ketuk = tampil/sembunyi, ketuk dua kali kiri/kanan = ±10 dtk,
         // tahan = 2×, geser vertikal (layar penuh) = kecerahan kiri / volume kanan.
-        SeekGestureLayer(
+        fun seekBy(delta: Long) { p.seekTo((p.currentPosition + delta).coerceIn(0, p.duration.coerceAtLeast(0))); interact++ }
+        if (!locked) SeekGestureLayer(
             onToggle = { visible = !visible; interact++ },
-            onSeek = { delta -> p.seekTo((p.currentPosition + delta).coerceIn(0, p.duration.coerceAtLeast(0))); interact++ },
+            onSeek = ::seekBy,
             onBoost = { on -> if (vm.phase == PlayerPhase.Playing) vm.boost(on) else vm.boost(false) },
             swipeEnabled = fullscreen,
+            stepMs = seekStepMs,
         )
         BoostPill(vm.boosting, Modifier.align(Alignment.TopCenter).padding(top = if (fullscreen) 24.dp else 12.dp))
 
@@ -303,7 +320,7 @@ private fun VideoBox(
         }
 
         // Kontrol
-        AnimatedVisibility(visible && vm.phase == PlayerPhase.Playing, enter = fadeIn(Motion.gentle()), exit = fadeOut(Motion.gentle())) {
+        AnimatedVisibility(visible && !locked && vm.phase == PlayerPhase.Playing, enter = fadeIn(Motion.gentle()), exit = fadeOut(Motion.gentle())) {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.3f to Color.Transparent, 0.7f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.75f)))) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = if (fullscreen) 28.dp else 8.dp, vertical = if (fullscreen) 16.dp else 6.dp),
@@ -316,11 +333,13 @@ private fun VideoBox(
                             Text(vm.stream?.episode?.title ?: "", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.75f), maxLines = 1)
                         }
                     }
+                    if (fullscreen) CtrlIcon(Icons.Rounded.Lock, "Kunci layar", { vm.boost(false); onLock(true) })
                     if (fullscreen) CtrlIcon(Icons.Rounded.Fullscreen, "Zoom", { zoom = !zoom; vm.flash(if (!zoom) "Pas layar" else "Isi layar") })
                     CtrlIcon(Icons.Rounded.Settings, "Pengaturan pemutar", onSettings)
                 }
                 Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(36.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CtrlIcon(Icons.Rounded.Replay10, "Mundur 10 detik", { p.seekBack(); interact++ }, size = 46.dp)
+                    val stepSec = (seekStepMs / 1000).toInt()
+                    StepButton(forward = false, stepSec = stepSec) { seekBy(-seekStepMs) }
                     Box(
                         Modifier.size(66.dp).springClick(pressedScale = 0.86f, haptic = true) {
                             if (p.isPlaying) p.pause() else { if (p.playbackState == Player.STATE_ENDED) p.seekTo(0); p.play() }
@@ -332,7 +351,7 @@ private fun VideoBox(
                             Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playing) "Jeda" else "Putar", tint = Color.White, modifier = Modifier.size(38.dp))
                         }
                     }
-                    CtrlIcon(Icons.Rounded.Forward10, "Maju 10 detik", { p.seekForward(); interact++ }, size = 46.dp)
+                    StepButton(forward = true, stepSec = stepSec) { seekBy(seekStepMs) }
                 }
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = if (fullscreen) 28.dp else 12.dp, vertical = if (fullscreen) 18.dp else 4.dp)) {
                     // Rentang intro seri ini ditandai di seek bar (kuning) bila sudah disimpan.
@@ -372,7 +391,7 @@ private fun VideoBox(
         // "Lewati intro": tampil walau kontrol tersembunyi, di atas area seek bar.
         // Mode "Mati" = tidak ada tombol, chip, maupun deteksi.
         val introSpot = Modifier.align(Alignment.BottomEnd).padding(end = if (fullscreen) 28.dp else 12.dp, bottom = if (fullscreen) 84.dp else 52.dp)
-        if (vm.phase == PlayerPhase.Playing && vm.introMode != IntroMode.OFF) {
+        if (vm.phase == PlayerPhase.Playing && vm.introMode != IntroMode.OFF && !locked) {
             if (!vm.introSkipped) {
                 val r = vm.intro
                 val show = if (r != null) position in (r.startMs - 1_000)..(r.endMs - 3_000)
@@ -391,6 +410,12 @@ private fun VideoBox(
                 onDismiss = vm::dismissIntroPrompt,
                 modifier = introSpot,
             )
+        }
+
+        if (locked) {
+            var hint by remember { mutableIntStateOf(0) }
+            BackHandler { hint++ } // kembali = tampilkan gembok, bukan keluar
+            LockLayer(onUnlock = { onLock(false); visible = true; interact++ }, hint = hint)
         }
 
         // Pesan sementara (beralih server, kecepatan…)
@@ -443,6 +468,20 @@ private fun SeekBar(
             },
         contentAlignment = Alignment.CenterStart,
     ) {
+        if (dragging && duration > 0) {
+            val t = (dragFrac * duration).toLong()
+            // Ukuran 0×0 di tengah-kiri bar; gelembung digeser ke atas jempol & dijaga dalam lebar bar.
+            Box(
+                Modifier.layout { m, c ->
+                    val pl = m.measure(c.copy(minWidth = 0, minHeight = 0))
+                    val total = c.maxWidth
+                    layout(0, 0) {
+                        val x = (dragFrac * total - pl.width / 2f).roundToInt().coerceIn(0, (total - pl.width).coerceAtLeast(0))
+                        pl.place(x, -(15.dp.roundToPx()) - pl.height - 6.dp.roundToPx())
+                    }
+                }
+            ) { ScrubBubble(t, intro != null && t in intro.startMs until intro.endMs) }
+        }
         Canvas(Modifier.fillMaxWidth().height(thumb)) {
             val y = size.height / 2
             val sw = h.toPx()
@@ -465,6 +504,15 @@ private fun SeekBar(
             drawCircle(Color.White, thumb.toPx() / 2, Offset(size.width * frac.coerceIn(0f, 1f), y))
         }
     }
+}
+
+@Composable
+private fun StepButton(forward: Boolean, stepSec: Int, onClick: () -> Unit) {
+    Box(
+        Modifier.size(46.dp).springClick(pressedScale = 0.82f, haptic = true, onClick = onClick)
+            .semantics { contentDescription = if (forward) "Maju $stepSec detik" else "Mundur $stepSec detik" },
+        contentAlignment = Alignment.Center,
+    ) { SeekStepIcon(forward, stepSec, 46.dp * 0.62f) }
 }
 
 @Composable
@@ -556,12 +604,6 @@ private fun InfoPanel(vm: PlayerViewModel, onSettings: () -> Unit) {
                 Pill(s.qualityLabel + if (vm.chain.count { it.qualityLabel == s.qualityLabel } > 1) " · ${s.server}" else "", s.url == vm.current?.url, { vm.select(s) })
             }
         }
-        Spacer(Modifier.height(18.dp))
-        Text("Kecepatan", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
-        Spacer(Modifier.height(8.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SPEEDS.forEach { s -> Pill(if (s == 1f) "Normal" else "${s}×", vm.speed == s, { vm.changeSpeed(s) }) }
-        }
         val next = st?.next
         if (next != null) {
             Spacer(Modifier.height(24.dp))
@@ -592,13 +634,21 @@ private fun InfoPanel(vm: PlayerViewModel, onSettings: () -> Unit) {
             Modifier.springClick(onClick = onSettings).clip(RoundedCornerShape(12.dp)).background(Palette.SurfaceHigh).padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Rounded.Speed, null, tint = Palette.TextDim, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(vm.current?.let { "Sumber: ${it.displayName}" } ?: "Sumber", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
+            // Kecepatan, server & intro hanya diatur di satu tempat: lembar ⚙.
+            Icon(Icons.Rounded.Settings, null, tint = Palette.TextDim, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text("Kecepatan, server & intro", style = MaterialTheme.typography.labelLarge, color = Palette.Text)
+                Text(
+                    listOfNotNull(if (vm.speed == 1f) "Kecepatan normal" else "Kecepatan ${vm.speed}×", vm.current?.displayName).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = Palette.TextDim,
+                )
+            }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SourceSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -619,8 +669,8 @@ private fun SourceSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
             Spacer(Modifier.height(14.dp))
             Text("Kecepatan putar", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                SPEEDS.forEach { sp -> Pill(if (sp == 1f) "1×" else "${sp}×", vm.speed == sp, { vm.changeSpeed(sp) }) }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SPEEDS.forEach { sp -> Pill(if (sp == 1f) "Normal" else "${sp}×", vm.speed == sp, { vm.changeSpeed(sp) }) }
             }
             Spacer(Modifier.height(18.dp))
             IntroSection(vm)

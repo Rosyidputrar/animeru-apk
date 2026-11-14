@@ -281,6 +281,18 @@ muncul saat posisi/titik geser ada di dalamnya). Aturannya murni & teruji di `In
 **Gestur pemutar.** Tahan = 2× selama ditahan, dengan haptic. Geser vertikal (layar penuh): kiri =
 kecerahan, kanan = volume. Tap vs tahan diputuskan dari stempel waktu event, bukan timer, sehingga
 tetap benar walau main thread tersendat. Diuji dengan tes instrumentasi `GestureLayerTest`.
+Lompatan ketuk-dua-kali (juga tombol mundur/maju di tengah) bisa 5, 10, atau 15 dtk di Pengaturan;
+notifikasi & earphone tetap 10 dtk. Saat seek bar digeser, gelembung waktu muncul di atas jempol
+(dengan label "Intro" bila di dalam rentang intro). Kecepatan, server & intro diatur di satu tempat:
+lembar ⚙ pemutar.
+
+**Kunci layar (layar penuh).** Ikon gembok di bilah atas mematikan semua gestur & kontrol. Ketuk di
+mana saja (atau tombol kembali) memunculkan gembok selama 3 dtk; ketuk gembok untuk membuka. Kunci
+lepas sendiri saat keluar layar penuh, masuk PiP, atau episode selesai/gagal.
+
+**Urungkan di Koleksi.** Menghapus riwayat atau unduhan memunculkan snackbar "Urungkan" (10 dtk).
+Riwayat langsung dihapus lalu dikembalikan bila diurungkan; file unduhan baru benar-benar dihapus
+saat snackbar hilang (paling lambat 11 dtk, walau layar sudah ditinggal).
 
 ## Pembaruan dalam aplikasi
 

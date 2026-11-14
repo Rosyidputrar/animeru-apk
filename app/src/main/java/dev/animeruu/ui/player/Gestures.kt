@@ -35,6 +35,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BrightnessMedium
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Forward10
+import androidx.compose.material.icons.rounded.Forward5
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.Replay10
+import androidx.compose.material.icons.rounded.Replay5
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.VolumeOff
@@ -59,6 +65,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.graphicsLayer
 import dev.animeruu.core.formatDuration
 import dev.animeruu.feature.IntroRange
 import dev.animeruu.ui.components.springClick
@@ -84,7 +92,10 @@ fun SeekGestureLayer(
     onSeek: (Long) -> Unit,
     onBoost: (Boolean) -> Unit,
     swipeEnabled: Boolean,
+    /** Besar satu lompatan ketuk-dua-kali (ms). */
+    stepMs: Long = 10_000,
 ) {
+    val step by rememberUpdatedState(stepMs)
     val ctx = LocalContext.current
     val activity = ctx as? Activity
     val audio = remember { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -130,9 +141,10 @@ fun SeekGestureLayer(
                 if (second != null && second.uptimeMillis - up.uptimeMillis <= doubleTap * 2) {
                     waitForUpOrCancellation()
                     val right = second.position.x > size.width / 2
-                    onSeek(if (right) 10_000 else -10_000)
+                    onSeek(if (right) step else -step)
+                    val sec = (step / 1000).toInt()
                     val prev = bubble
-                    bubble = right to (if (prev != null && prev.first == right) prev.second + 10 else 10)
+                    bubble = right to (if (prev != null && prev.first == right) prev.second + sec else sec)
                 } else {
                     onToggle()
                 }
@@ -172,7 +184,7 @@ fun SeekGestureLayer(
         val b = bubble
         AnimatedVisibility(b != null, Modifier.align(if (b?.first == true) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = 40.dp), enter = scaleIn(Motion.press()) + fadeIn(), exit = fadeOut()) {
             Text(
-                if (b?.first == true) "+${b.second} dtk" else "−${b?.second ?: 10} dtk",
+                if (b?.first == true) "+${b.second} dtk" else "−${b?.second ?: (stepMs / 1000)} dtk",
                 style = MaterialTheme.typography.titleMedium, color = Color.White,
                 modifier = Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.18f)).padding(horizontal = 16.dp, vertical = 10.dp),
             )
@@ -303,4 +315,87 @@ private fun ChipAction(text: String, onClick: () -> Unit) {
         modifier = Modifier.springClick(pressedScale = 0.92f, haptic = true, onClick = onClick)
             .clip(RoundedCornerShape(8.dp)).background(Palette.Accent).padding(horizontal = 12.dp, vertical = 7.dp),
     )
+}
+
+/**
+ * Ikon mundur/maju sesuai langkah. Material punya 5 & 10; untuk 15 dipakai panah putar
+ * (dicerminkan untuk maju) dengan angka di tengahnya.
+ */
+@Composable
+fun SeekStepIcon(forward: Boolean, stepSec: Int, size: androidx.compose.ui.unit.Dp) {
+    when (stepSec) {
+        5 -> Icon(if (forward) Icons.Rounded.Forward5 else Icons.Rounded.Replay5, null, tint = Color.White, modifier = Modifier.size(size))
+        10 -> Icon(if (forward) Icons.Rounded.Forward10 else Icons.Rounded.Replay10, null, tint = Color.White, modifier = Modifier.size(size))
+        else -> Box(Modifier.size(size), contentAlignment = Alignment.Center) {
+            Icon(
+                Icons.Rounded.Replay, null, tint = Color.White,
+                modifier = Modifier.fillMaxSize().graphicsLayer { if (forward) scaleX = -1f },
+            )
+            Text(
+                "$stepSec", color = Color.White, fontSize = (size.value * 0.3f).sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                modifier = Modifier.padding(top = size * 0.1f),
+            )
+        }
+    }
+}
+
+/**
+ * Layar terkunci (layar penuh): semua gestur & kontrol dimatikan. Ketuk di mana saja →
+ * tombol gembok muncul 3 dtk; ketuk gembok untuk membuka. Tombol kembali juga hanya
+ * memunculkan gembok.
+ */
+@Composable
+fun LockLayer(onUnlock: () -> Unit, hint: Int) {
+    var shown by remember { mutableStateOf(true) }
+    var poke by remember { mutableStateOf(0) }
+    LaunchedEffect(hint) { if (hint > 0) { shown = true; poke++ } }
+    LaunchedEffect(shown, poke) { if (shown) { delay(3_000); shown = false } }
+    Box(
+        Modifier.fillMaxSize().pointerInput(Unit) {
+            // Telan semua sentuhan (termasuk geser) supaya tidak sampai ke video.
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false).consume()
+                do {
+                    val ev = awaitPointerEvent()
+                    ev.changes.forEach { it.consume() }
+                } while (ev.changes.any { it.pressed })
+                shown = true; poke++
+            }
+        }
+    ) {
+        AnimatedVisibility(
+            shown, Modifier.align(Alignment.CenterStart).padding(start = 36.dp),
+            enter = fadeIn() + scaleIn(Motion.press(), initialScale = 0.85f), exit = fadeOut(),
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    Modifier.size(56.dp).springClick(pressedScale = 0.85f, haptic = true, onClick = onUnlock)
+                        .clip(CircleShape).background(Color.Black.copy(alpha = 0.6f)).border(0.5.dp, Color.White.copy(alpha = 0.25f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Rounded.Lock, "Buka kunci layar", tint = Color.White, modifier = Modifier.size(26.dp)) }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Ketuk gembok untuk membuka", style = MaterialTheme.typography.labelSmall, color = Color.White,
+                    modifier = Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.5f)).padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Gelembung waktu di atas jempol seek bar saat digeser. */
+@Composable
+fun ScrubBubble(timeMs: Long, inIntro: Boolean) {
+    Row(
+        Modifier.clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.8f))
+            .border(0.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(8.dp)).padding(horizontal = 9.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(formatDuration(timeMs), style = MaterialTheme.typography.labelLarge, color = Color.White)
+        if (inIntro) {
+            Spacer(Modifier.width(6.dp))
+            Text("Intro", style = MaterialTheme.typography.labelSmall, color = Palette.Warning)
+        }
+    }
 }

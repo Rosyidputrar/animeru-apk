@@ -34,7 +34,11 @@ data class Settings(
     val introMode: IntroMode = IntroMode.BUTTON,
     /** Lanjutkan suara saat aplikasi ditinggal / layar dikunci (tanpa PiP). */
     val backgroundAudio: Boolean = false,
+    /** Lompatan ketuk-dua-kali & tombol mundur/maju di pemutar (detik): 5, 10, atau 15. */
+    val seekStepSec: Int = 10,
 )
+
+val SEEK_STEPS = listOf(5, 10, 15)
 
 private val Context.store by preferencesDataStore("settings")
 
@@ -50,6 +54,7 @@ class SettingsRepository(private val context: Context) {
     private val kAutoIntroLegacy = booleanPreferencesKey("auto_skip_intro")
     private val kIntroMode = intPreferencesKey("intro_mode")
     private val kBgAudio = booleanPreferencesKey("background_audio")
+    private val kSeekStep = intPreferencesKey("seek_step_sec")
 
     val settings: Flow<Settings> = context.store.data.map {
         Settings(
@@ -63,6 +68,7 @@ class SettingsRepository(private val context: Context) {
             introMode = it[kIntroMode]?.let { o -> IntroMode.entries.getOrNull(o) }
                 ?: if (it[kAutoIntroLegacy] == true) IntroMode.AUTO else IntroMode.BUTTON,
             backgroundAudio = it[kBgAudio] ?: false,
+            seekStepSec = it[kSeekStep]?.takeIf { s -> s in SEEK_STEPS } ?: 10,
         )
     }
 
@@ -75,4 +81,5 @@ class SettingsRepository(private val context: Context) {
     suspend fun setNewEpisodeAlerts(v: Boolean) = context.store.edit { it[kNewEp] = v }
     suspend fun setIntroMode(m: IntroMode) = context.store.edit { it[kIntroMode] = m.ordinal }
     suspend fun setBackgroundAudio(v: Boolean) = context.store.edit { it[kBgAudio] = v }
+    suspend fun setSeekStep(sec: Int) = context.store.edit { it[kSeekStep] = sec }
 }

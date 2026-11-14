@@ -85,6 +85,11 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit) {
             Divider()
             Toggle("Putar audio di latar", "Suara tetap jalan saat keluar aplikasi atau layar dikunci (bila PiP tidak dipakai). Lebih boros baterai & kuota.", s.backgroundAudio) { scope.launch { c.settings.setBackgroundAudio(it) } }
             Divider()
+            Label("Lompatan ketuk-dua-kali", "Juga dipakai tombol mundur/maju di tengah layar. Notifikasi & earphone tetap 10 dtk.")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
+                dev.animeruu.data.repo.SEEK_STEPS.forEach { sec -> Pill("$sec dtk", s.seekStepSec == sec, { scope.launch { c.settings.setSeekStep(sec) } }) }
+            }
+            Divider()
             Label(
                 "Lewati intro",
                 when (s.introMode) {

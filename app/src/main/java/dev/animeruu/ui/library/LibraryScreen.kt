@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -42,9 +43,14 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,18 +76,61 @@ import dev.animeruu.ui.components.StateMessage
 import dev.animeruu.ui.components.springClick
 import dev.animeruu.ui.theme.Motion
 import dev.animeruu.ui.theme.Palette
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 class LibraryViewModel(private val c: AppContainer) : ViewModel() {
     val favorites = c.library.favorites.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val history = c.library.history.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val downloads = c.downloads.items.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    fun removeHistory(id: String) = viewModelScope.launch { c.library.removeHistory(id) }
-    fun removeDownload(id: String) = viewModelScope.launch { c.downloads.remove(id) }
+    /**
+     * Unduhan yang "dihapus" tapi masih bisa diurungkan: disembunyikan dari daftar, file baru
+     * benar-benar dihapus saat snackbar hilang (atau paling lambat [UNDO_WINDOW_MS], walau layar
+     * sudah ditinggal — dijalankan di appScope).
+     */
+    private val pendingDownloads = MutableStateFlow<Set<String>>(emptySet())
+    private val removalJobs = ConcurrentHashMap<String, Job>()
+    val downloads = combine(c.downloads.items, pendingDownloads) { l, p -> l.filter { it.meta.episodeId !in p } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Riwayat dihapus langsung; baris lama dikembalikan bila diurungkan. */
+    fun removeHistory(h: HistoryEntity) = viewModelScope.launch { c.library.removeHistory(h.animeId) }
+    fun restoreHistory(h: HistoryEntity) = c.appScope.launch { c.library.restoreHistory(h) }
+
+    fun removeDownload(id: String) {
+        pendingDownloads.update { it + id }
+        removalJobs.remove(id)?.cancel()
+        removalJobs[id] = c.appScope.launch { delay(UNDO_WINDOW_MS); commitDownloadRemoval(id) }
+    }
+
+    fun undoDownloadRemoval(id: String) {
+        removalJobs.remove(id)?.cancel()
+        pendingDownloads.update { it - id }
+    }
+
+    /** Snackbar ditutup tanpa "Urungkan" → hapus sekarang. */
+    fun commitDownloadRemoval(id: String) {
+        val job = removalJobs.remove(id)
+        c.appScope.launch {
+            c.downloads.remove(id)
+            pendingDownloads.update { it - id }
+        }
+        job?.cancel()
+    }
+
     fun retryDownload(d: DownloadItem) = c.downloads.retry(d.meta)
+
+    companion object {
+        /** Sedikit lebih lama dari SnackbarDuration.Long (10 dtk). */
+        const val UNDO_WINDOW_MS = 11_000L
+    }
 }
 
 data class LibraryActions(
@@ -104,55 +153,78 @@ fun LibraryScreen(vm: LibraryViewModel, a: LibraryActions) {
     val tabs = listOf("Favorit", "Riwayat", "Unduhan")
     val pager = rememberPagerState { tabs.size }
     val scope = rememberCoroutineScope()
+    val snack = remember { SnackbarHostState() }
+    /** Snackbar "Urungkan"; snackbar sebelumnya ditutup (= dianggap tidak diurungkan). */
+    fun offerUndo(message: String, onUndo: () -> Unit, onExpire: () -> Unit = {}) {
+        snack.currentSnackbarData?.dismiss()
+        scope.launch {
+            when (snack.showSnackbar(message, actionLabel = "Urungkan", withDismissAction = true, duration = SnackbarDuration.Long)) {
+                SnackbarResult.ActionPerformed -> onUndo()
+                SnackbarResult.Dismissed -> onExpire()
+            }
+        }
+    }
 
-    Column(Modifier.fillMaxSize().background(Palette.Bg).statusBarsPadding()) {
-        Row(Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Koleksi", style = MaterialTheme.typography.headlineMedium, color = Palette.Text, modifier = Modifier.weight(1f))
-            GlassIconButton(Icons.Rounded.Settings, "Pengaturan", a.openSettings, size = 40.dp)
-        }
-        Spacer(Modifier.height(16.dp))
-        BoxWithConstraints(
-            Modifier.padding(horizontal = 20.dp).fillMaxWidth().height(44.dp).clip(RoundedCornerShape(14.dp))
-                .background(Palette.Surface).border(0.5.dp, Palette.Stroke, RoundedCornerShape(14.dp)).padding(3.dp)
-        ) {
-            val w = maxWidth / tabs.size
-            val x by animateDpAsState(w * (pager.currentPage + pager.currentPageOffsetFraction), Motion.snappy(), label = "tab")
-            Box(Modifier.offset(x = x).width(w).fillMaxHeight().clip(RoundedCornerShape(11.dp)).background(Palette.SurfaceHigher))
-            Row(Modifier.fillMaxSize()) {
-                tabs.forEachIndexed { i, t ->
-                    val count = when (i) { 0 -> favs.size; 1 -> hist.size; else -> dls.size }
-                    Box(Modifier.weight(1f).fillMaxHeight().springClick(haptic = true) { scope.launch { pager.animateScrollToPage(i, animationSpec = Motion.gentle()) } }, contentAlignment = Alignment.Center) {
-                        Text(if (count > 0) "$t  $count" else t, style = MaterialTheme.typography.labelLarge, color = if (pager.currentPage == i) Palette.Text else Palette.TextDim)
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().background(Palette.Bg).statusBarsPadding()) {
+            Row(Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Koleksi", style = MaterialTheme.typography.headlineMedium, color = Palette.Text, modifier = Modifier.weight(1f))
+                GlassIconButton(Icons.Rounded.Settings, "Pengaturan", a.openSettings, size = 40.dp)
+            }
+            Spacer(Modifier.height(16.dp))
+            BoxWithConstraints(
+                Modifier.padding(horizontal = 20.dp).fillMaxWidth().height(44.dp).clip(RoundedCornerShape(14.dp))
+                    .background(Palette.Surface).border(0.5.dp, Palette.Stroke, RoundedCornerShape(14.dp)).padding(3.dp)
+            ) {
+                val w = maxWidth / tabs.size
+                val x by animateDpAsState(w * (pager.currentPage + pager.currentPageOffsetFraction), Motion.snappy(), label = "tab")
+                Box(Modifier.offset(x = x).width(w).fillMaxHeight().clip(RoundedCornerShape(11.dp)).background(Palette.SurfaceHigher))
+                Row(Modifier.fillMaxSize()) {
+                    tabs.forEachIndexed { i, t ->
+                        val count = when (i) { 0 -> favs.size; 1 -> hist.size; else -> dls.size }
+                        Box(Modifier.weight(1f).fillMaxHeight().springClick(haptic = true) { scope.launch { pager.animateScrollToPage(i, animationSpec = Motion.gentle()) } }, contentAlignment = Alignment.Center) {
+                            Text(if (count > 0) "$t  $count" else t, style = MaterialTheme.typography.labelLarge, color = if (pager.currentPage == i) Palette.Text else Palette.TextDim)
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
+                when (page) {
+                    0 -> if (favs.isEmpty()) StateMessage(Icons.Rounded.FavoriteBorder, "Belum ada favorit", "Ketuk ikon hati di halaman anime untuk menyimpannya di sini.", Modifier.padding(top = 60.dp))
+                    else LazyVerticalGrid(
+                        GridCells.Adaptive(108.dp), Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 130.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(18.dp),
+                    ) {
+                        items(favs, key = { it.animeId }) { f ->
+                            val k = "poster-fav-${f.animeId}"
+                            PosterCard(f.toAnime(), null, onClick = { a.openAnime(f.toAnime(), k) }, sharedKey = k, modifier = Modifier.animateItem())
+                        }
+                    }
+                    1 -> if (hist.isEmpty()) StateMessage(Icons.Rounded.History, "Riwayat kosong", "Episode yang kamu tonton akan muncul di sini, lengkap dengan posisi terakhir.", Modifier.padding(top = 60.dp))
+                    else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 130.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(hist, key = { it.animeId }) { h -> HistoryRow(h, { a.play(h.animeId, h.episodeId) }, {
+                            vm.removeHistory(h)
+                            offerUndo("${h.animeTitle} dihapus dari riwayat", onUndo = { vm.restoreHistory(h) })
+                        }, Modifier.animateItem()) }
+                    }
+                    else -> if (dls.isEmpty()) StateMessage(Icons.Rounded.DownloadForOffline, "Belum ada unduhan", "Ketuk ikon unduh di daftar episode untuk menonton tanpa internet.", Modifier.padding(top = 60.dp))
+                    else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 130.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(dls, key = { it.meta.episodeId }) { d ->
+                            val id = d.meta.episodeId
+                            DownloadRow(d, { a.play(d.meta.animeId, id) }, {
+                                vm.removeDownload(id)
+                                val what = if (d.meta.isMovie) d.meta.animeTitle else "${d.meta.animeTitle} · Ep ${d.meta.episodeLabel}"
+                                offerUndo("Unduhan $what dihapus", onUndo = { vm.undoDownloadRemoval(id) }, onExpire = { vm.commitDownloadRemoval(id) })
+                            }, { vm.retryDownload(d) }, Modifier.animateItem())
+                        }
                     }
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
-        HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
-            when (page) {
-                0 -> if (favs.isEmpty()) StateMessage(Icons.Rounded.FavoriteBorder, "Belum ada favorit", "Ketuk ikon hati di halaman anime untuk menyimpannya di sini.", Modifier.padding(top = 60.dp))
-                else LazyVerticalGrid(
-                    GridCells.Adaptive(108.dp), Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 130.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(18.dp),
-                ) {
-                    items(favs, key = { it.animeId }) { f ->
-                        val k = "poster-fav-${f.animeId}"
-                        PosterCard(f.toAnime(), null, onClick = { a.openAnime(f.toAnime(), k) }, sharedKey = k, modifier = Modifier.animateItem())
-                    }
-                }
-                1 -> if (hist.isEmpty()) StateMessage(Icons.Rounded.History, "Riwayat kosong", "Episode yang kamu tonton akan muncul di sini, lengkap dengan posisi terakhir.", Modifier.padding(top = 60.dp))
-                else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 130.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(hist, key = { it.animeId }) { h -> HistoryRow(h, { a.play(h.animeId, h.episodeId) }, { vm.removeHistory(h.animeId) }, Modifier.animateItem()) }
-                }
-                else -> if (dls.isEmpty()) StateMessage(Icons.Rounded.DownloadForOffline, "Belum ada unduhan", "Ketuk ikon unduh di daftar episode untuk menonton tanpa internet.", Modifier.padding(top = 60.dp))
-                else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 130.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(dls, key = { it.meta.episodeId }) { d ->
-                        DownloadRow(d, { a.play(d.meta.animeId, d.meta.episodeId) }, { vm.removeDownload(d.meta.episodeId) }, { vm.retryDownload(d) }, Modifier.animateItem())
-                    }
-                }
-            }
-        }
+        // Di atas bilah navigasi bawah yang melayang.
+        SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = 96.dp))
     }
 }
 
