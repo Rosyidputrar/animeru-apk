@@ -48,16 +48,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CloudOff
-import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SkipNext
-import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -91,6 +89,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -104,10 +104,13 @@ import androidx.media3.ui.PlayerView
 import dev.animeruu.core.formatDuration
 import kotlinx.coroutines.flow.map
 import dev.animeruu.container
+import dev.animeruu.data.repo.IntroMode
 import dev.animeruu.data.repo.Settings
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.layout
+import kotlin.math.roundToInt
 import dev.animeruu.domain.StreamSource
 import dev.animeruu.ui.components.AnimeArt
 import dev.animeruu.ui.components.ArtKind
@@ -186,16 +189,24 @@ fun PlayerScreen(vm: PlayerViewModel, onBack: () -> Unit) {
     }
 
     BackHandler(landscape && !inPip) { toggleFullscreen() }
+    // Kunci layar hanya untuk layar penuh yang sedang memutar; lepas otomatis di luar itu.
+    var locked by remember { mutableStateOf(false) }
+    LaunchedEffect(landscape, inPip, vm.phase) { if (!landscape || inPip || vm.phase != PlayerPhase.Playing) locked = false }
+    val stepMs = settings.seekStepSec * 1000L
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (inPip) {
             VideoBox(vm, true, onBack = onBack, onFullscreen = {}, onSettings = {}, modifier = Modifier.fillMaxSize(), pip = true)
         } else if (landscape) {
-            VideoBox(vm, true, onBack = { toggleFullscreen() }, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true }, modifier = Modifier.fillMaxSize().then(trackBounds))
+            VideoBox(
+                vm, true, onBack = { toggleFullscreen() }, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true },
+                modifier = Modifier.fillMaxSize().then(trackBounds), seekStepMs = stepMs,
+                locked = locked, onLock = { locked = it },
+            )
         } else {
             Column(Modifier.fillMaxSize().background(Palette.Bg)) {
                 Box(Modifier.background(Color.Black).statusBarsPadding()) {
-                    VideoBox(vm, false, onBack = onBack, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(trackBounds))
+                    VideoBox(vm, false, onBack = onBack, onFullscreen = ::toggleFullscreen, onSettings = { sheet = true }, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(trackBounds), seekStepMs = stepMs)
                 }
                 InfoPanel(vm, onSettings = { sheet = true })
             }
@@ -214,6 +225,11 @@ private fun VideoBox(
     modifier: Modifier,
     /** Di jendela PiP: hanya video (+ indikator buffering); kontrol lewat tombol sistem PiP. */
     pip: Boolean = false,
+    /** Lompatan ketuk-dua-kali & tombol mundur/maju (ms). */
+    seekStepMs: Long = 10_000,
+    /** Layar terkunci: semua gestur & kontrol dimatikan sampai gembok diketuk. */
+    locked: Boolean = false,
+    onLock: (Boolean) -> Unit = {},
 ) {
     val p = vm.player
     var visible by remember { mutableStateOf(true) }
@@ -281,11 +297,13 @@ private fun VideoBox(
 
         // Zona gestur: ketuk = tampil/sembunyi, ketuk dua kali kiri/kanan = ±10 dtk,
         // tahan = 2×, geser vertikal (layar penuh) = kecerahan kiri / volume kanan.
-        SeekGestureLayer(
+        fun seekBy(delta: Long) { p.seekTo((p.currentPosition + delta).coerceIn(0, p.duration.coerceAtLeast(0))); interact++ }
+        if (!locked) SeekGestureLayer(
             onToggle = { visible = !visible; interact++ },
-            onSeek = { delta -> p.seekTo((p.currentPosition + delta).coerceIn(0, p.duration.coerceAtLeast(0))); interact++ },
+            onSeek = ::seekBy,
             onBoost = { on -> if (vm.phase == PlayerPhase.Playing) vm.boost(on) else vm.boost(false) },
             swipeEnabled = fullscreen,
+            stepMs = seekStepMs,
         )
         BoostPill(vm.boosting, Modifier.align(Alignment.TopCenter).padding(top = if (fullscreen) 24.dp else 12.dp))
 
@@ -302,7 +320,7 @@ private fun VideoBox(
         }
 
         // Kontrol
-        AnimatedVisibility(visible && vm.phase == PlayerPhase.Playing, enter = fadeIn(Motion.gentle()), exit = fadeOut(Motion.gentle())) {
+        AnimatedVisibility(visible && !locked && vm.phase == PlayerPhase.Playing, enter = fadeIn(Motion.gentle()), exit = fadeOut(Motion.gentle())) {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 0.3f to Color.Transparent, 0.7f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.75f)))) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = if (fullscreen) 28.dp else 8.dp, vertical = if (fullscreen) 16.dp else 6.dp),
@@ -315,11 +333,13 @@ private fun VideoBox(
                             Text(vm.stream?.episode?.title ?: "", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.75f), maxLines = 1)
                         }
                     }
+                    if (fullscreen) CtrlIcon(Icons.Rounded.Lock, "Kunci layar", { vm.boost(false); onLock(true) })
                     if (fullscreen) CtrlIcon(Icons.Rounded.Fullscreen, "Zoom", { zoom = !zoom; vm.flash(if (!zoom) "Pas layar" else "Isi layar") })
-                    CtrlIcon(Icons.Rounded.Settings, "Kualitas & server", onSettings)
+                    CtrlIcon(Icons.Rounded.Settings, "Pengaturan pemutar", onSettings)
                 }
                 Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(36.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CtrlIcon(Icons.Rounded.Replay10, "Mundur 10 detik", { p.seekBack(); interact++ }, size = 46.dp)
+                    val stepSec = (seekStepMs / 1000).toInt()
+                    StepButton(forward = false, stepSec = stepSec) { seekBy(-seekStepMs) }
                     Box(
                         Modifier.size(66.dp).springClick(pressedScale = 0.86f, haptic = true) {
                             if (p.isPlaying) p.pause() else { if (p.playbackState == Player.STATE_ENDED) p.seekTo(0); p.play() }
@@ -331,11 +351,20 @@ private fun VideoBox(
                             Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playing) "Jeda" else "Putar", tint = Color.White, modifier = Modifier.size(38.dp))
                         }
                     }
-                    CtrlIcon(Icons.Rounded.Forward10, "Maju 10 detik", { p.seekForward(); interact++ }, size = 46.dp)
+                    StepButton(forward = true, stepSec = stepSec) { seekBy(seekStepMs) }
                 }
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = if (fullscreen) 28.dp else 12.dp, vertical = if (fullscreen) 18.dp else 4.dp)) {
+                    // Rentang intro seri ini ditandai di seek bar (kuning) bila sudah disimpan.
+                    val introMark = vm.intro?.takeIf { vm.introMode != IntroMode.OFF && duration > 0 && it.startMs < duration }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${formatDuration(position)} / ${formatDuration(duration)}", style = MaterialTheme.typography.labelMedium, color = Color.White)
+                        // Label "Intro" saat posisi (atau titik geser) berada di dalam tanda kuning.
+                        AnimatedVisibility(introMark != null && position in introMark.startMs until introMark.endMs, enter = fadeIn(), exit = fadeOut()) {
+                            Text(
+                                "Intro", style = MaterialTheme.typography.labelSmall, color = Color.Black,
+                                modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(6.dp)).background(Palette.Warning).padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
                         Spacer(Modifier.weight(1f))
                         if (vm.stream?.next != null) {
                             Row(
@@ -351,7 +380,7 @@ private fun VideoBox(
                         CtrlIcon(if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen, "Layar penuh", onFullscreen, size = 36.dp)
                     }
                     SeekBar(
-                        position = position, duration = duration, buffered = buffered,
+                        position = position, duration = duration, buffered = buffered, intro = introMark,
                         onScrub = { scrubbing = true; position = it; interact++ },
                         onCommit = { p.seekTo(it); scrubbing = false },
                     )
@@ -360,15 +389,33 @@ private fun VideoBox(
         }
 
         // "Lewati intro": tampil walau kontrol tersembunyi, di atas area seek bar.
-        if (vm.phase == PlayerPhase.Playing && !vm.introSkipped) {
-            val r = vm.intro
-            val show = if (r != null) position in (r.startMs - 1_000)..(r.endMs - 3_000)
-            else duration > 8 * 60_000 && position in 20_000L..180_000L
-            IntroButton(
-                visible = show, learned = r != null,
-                onClick = { vm.skipIntro(); interact++ },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = if (fullscreen) 28.dp else 12.dp, bottom = if (fullscreen) 84.dp else 52.dp),
+        // Mode "Mati" = tidak ada tombol, chip, maupun deteksi.
+        val introSpot = Modifier.align(Alignment.BottomEnd).padding(end = if (fullscreen) 28.dp else 12.dp, bottom = if (fullscreen) 84.dp else 52.dp)
+        if (vm.phase == PlayerPhase.Playing && vm.introMode != IntroMode.OFF && !locked) {
+            if (!vm.introSkipped) {
+                val r = vm.intro
+                val show = if (r != null) position in (r.startMs - 1_000)..(r.endMs - 3_000)
+                // Tebakan 85 dtk hanya untuk seri; film tidak punya opening berulang.
+                else vm.anime?.kind != dev.animeruu.domain.AnimeKind.MOVIE && duration > 8 * 60_000 && position in 20_000L..180_000L
+                IntroButton(
+                    visible = show, learned = r != null,
+                    onClick = { vm.skipIntro(); interact++ },
+                    modifier = introSpot,
+                )
+            }
+            IntroPromptChip(
+                prompt = vm.introPrompt,
+                onRemember = vm::rememberIntro,
+                onWatch = vm::watchIntro,
+                onDismiss = vm::dismissIntroPrompt,
+                modifier = introSpot,
             )
+        }
+
+        if (locked) {
+            var hint by remember { mutableIntStateOf(0) }
+            BackHandler { hint++ } // kembali = tampilkan gembok, bukan keluar
+            LockLayer(onUnlock = { onLock(false); visible = true; interact++ }, hint = hint)
         }
 
         // Pesan sementara (beralih server, kecepatan…)
@@ -391,7 +438,15 @@ private fun VideoBox(
 }
 
 @Composable
-private fun SeekBar(position: Long, duration: Long, buffered: Long, onScrub: (Long) -> Unit, onCommit: (Long) -> Unit) {
+private fun SeekBar(
+    position: Long,
+    duration: Long,
+    buffered: Long,
+    onScrub: (Long) -> Unit,
+    onCommit: (Long) -> Unit,
+    /** Rentang intro yang ditandai di atas trek (null = tanpa tanda). */
+    intro: dev.animeruu.feature.IntroRange? = null,
+) {
     var dragging by remember { mutableStateOf(false) }
     var dragFrac by remember { mutableFloatStateOf(0f) }
     val h by animateDpAsState(if (dragging) 8.dp else 4.dp, Motion.press(), label = "h")
@@ -413,15 +468,51 @@ private fun SeekBar(position: Long, duration: Long, buffered: Long, onScrub: (Lo
             },
         contentAlignment = Alignment.CenterStart,
     ) {
+        if (dragging && duration > 0) {
+            val t = (dragFrac * duration).toLong()
+            // Ukuran 0×0 di tengah-kiri bar; gelembung digeser ke atas jempol & dijaga dalam lebar bar.
+            Box(
+                Modifier.layout { m, c ->
+                    val pl = m.measure(c.copy(minWidth = 0, minHeight = 0))
+                    val total = c.maxWidth
+                    layout(0, 0) {
+                        val x = (dragFrac * total - pl.width / 2f).roundToInt().coerceIn(0, (total - pl.width).coerceAtLeast(0))
+                        pl.place(x, -(15.dp.roundToPx()) - pl.height - 6.dp.roundToPx())
+                    }
+                }
+            ) { ScrubBubble(t, intro != null && t in intro.startMs until intro.endMs) }
+        }
         Canvas(Modifier.fillMaxWidth().height(thumb)) {
             val y = size.height / 2
             val sw = h.toPx()
             drawLine(Color.White.copy(alpha = 0.22f), Offset(0f, y), Offset(size.width, y), sw, StrokeCap.Round)
             drawLine(Color.White.copy(alpha = 0.4f), Offset(0f, y), Offset(size.width * bufFrac.coerceIn(0f, 1f), y), sw, StrokeCap.Round)
             drawLine(Brush.horizontalGradient(listOf(Palette.Accent, Palette.Accent2)), Offset(0f, y), Offset(size.width * frac.coerceIn(0f, 1f), y), sw, StrokeCap.Round)
+            if (intro != null && duration > 0) {
+                // Di atas progres supaya tetap terlihat setelah dilewati; celah gelap di kedua ujung
+                // memisahkannya dari trek (gaya penanda bab).
+                val x0 = size.width * (intro.startMs.toFloat() / duration).coerceIn(0f, 1f)
+                val x1 = size.width * (intro.endMs.toFloat() / duration).coerceIn(0f, 1f)
+                if (x1 - x0 >= 1f) {
+                    drawLine(Palette.Warning.copy(alpha = 0.85f), Offset(x0, y), Offset(x1, y), sw, StrokeCap.Butt)
+                    val gap = 1.5.dp.toPx()
+                    for (x in floatArrayOf(x0, x1)) {
+                        drawLine(Color.Black.copy(alpha = 0.7f), Offset(x, y - sw / 2), Offset(x, y + sw / 2), gap)
+                    }
+                }
+            }
             drawCircle(Color.White, thumb.toPx() / 2, Offset(size.width * frac.coerceIn(0f, 1f), y))
         }
     }
+}
+
+@Composable
+private fun StepButton(forward: Boolean, stepSec: Int, onClick: () -> Unit) {
+    Box(
+        Modifier.size(46.dp).springClick(pressedScale = 0.82f, haptic = true, onClick = onClick)
+            .semantics { contentDescription = if (forward) "Maju $stepSec detik" else "Mundur $stepSec detik" },
+        contentAlignment = Alignment.Center,
+    ) { SeekStepIcon(forward, stepSec, 46.dp * 0.62f) }
 }
 
 @Composable
@@ -458,7 +549,7 @@ private fun EndedOverlay(vm: PlayerViewModel, ph: PlayerPhase.Ended) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Selesai ditonton", style = MaterialTheme.typography.titleMedium, color = Color.White)
                 Spacer(Modifier.height(10.dp))
-                PrimaryButton("Tonton ulang", { vm.player.seekTo(0); vm.player.play(); vm.retry() }, icon = Icons.Rounded.Refresh)
+                PrimaryButton("Tonton ulang", vm::replay, icon = Icons.Rounded.Refresh)
             }
         } else {
             val ring = remember(next.id) { Animatable(0f) }
@@ -513,12 +604,6 @@ private fun InfoPanel(vm: PlayerViewModel, onSettings: () -> Unit) {
                 Pill(s.qualityLabel + if (vm.chain.count { it.qualityLabel == s.qualityLabel } > 1) " · ${s.server}" else "", s.url == vm.current?.url, { vm.select(s) })
             }
         }
-        Spacer(Modifier.height(18.dp))
-        Text("Kecepatan", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
-        Spacer(Modifier.height(8.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SPEEDS.forEach { s -> Pill(if (s == 1f) "Normal" else "${s}×", vm.speed == s, { vm.changeSpeed(s) }) }
-        }
         val next = st?.next
         if (next != null) {
             Spacer(Modifier.height(24.dp))
@@ -549,21 +634,31 @@ private fun InfoPanel(vm: PlayerViewModel, onSettings: () -> Unit) {
             Modifier.springClick(onClick = onSettings).clip(RoundedCornerShape(12.dp)).background(Palette.SurfaceHigh).padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Rounded.Speed, null, tint = Palette.TextDim, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(vm.current?.let { "Sumber: ${it.displayName}" } ?: "Sumber", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
+            // Kecepatan, server & intro hanya diatur di satu tempat: lembar ⚙.
+            Icon(Icons.Rounded.Settings, null, tint = Palette.TextDim, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text("Kecepatan, server & intro", style = MaterialTheme.typography.labelLarge, color = Palette.Text)
+                Text(
+                    listOfNotNull(if (vm.speed == 1f) "Kecepatan normal" else "Kecepatan ${vm.speed}×", vm.current?.displayName).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = Palette.TextDim,
+                )
+            }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SourceSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     ModalBottomSheet(onDismiss, sheetState = state, containerColor = Palette.Surface) {
-        Column(Modifier.padding(horizontal = 20.dp).navigationBarsPadding().padding(bottom = 16.dp)) {
-            Text("Kualitas & server", style = MaterialTheme.typography.titleLarge, color = Palette.Text)
-            Text("Urutan di bawah adalah rantai cadangan otomatis — bila satu gagal, berikutnya dicoba.", style = MaterialTheme.typography.bodySmall, color = Palette.TextDim)
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).navigationBarsPadding().padding(bottom = 16.dp)) {
+            Text("Pengaturan pemutar", style = MaterialTheme.typography.titleLarge, color = Palette.Text)
+            Spacer(Modifier.height(12.dp))
+            Text("Kualitas & server", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
+            Text("Urutan di bawah adalah rantai cadangan otomatis — bila satu gagal, berikutnya dicoba.", style = MaterialTheme.typography.bodySmall, color = Palette.TextFaint)
             Spacer(Modifier.height(12.dp))
             vm.chain.forEachIndexed { i, s ->
                 SourceRow(i, s, s.url == vm.current?.url) {
@@ -574,10 +669,73 @@ private fun SourceSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
             Spacer(Modifier.height(14.dp))
             Text("Kecepatan putar", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                SPEEDS.forEach { sp -> Pill(if (sp == 1f) "1×" else "${sp}×", vm.speed == sp, { vm.changeSpeed(sp) }) }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SPEEDS.forEach { sp -> Pill(if (sp == 1f) "Normal" else "${sp}×", vm.speed == sp, { vm.changeSpeed(sp) }) }
+            }
+            Spacer(Modifier.height(18.dp))
+            IntroSection(vm)
+        }
+    }
+}
+
+/**
+ * Semua hal tentang intro di satu tempat: mode (berlaku untuk semua seri) dan posisi intro
+ * seri ini, yang bisa ditandai langsung dari posisi putar sekarang.
+ */
+@Composable
+private fun IntroSection(vm: PlayerViewModel) {
+    Text("Lewati intro", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
+    Spacer(Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf(IntroMode.OFF to "Mati", IntroMode.BUTTON to "Tombol", IntroMode.AUTO to "Otomatis").forEach { (m, l) ->
+            Pill(l, vm.introMode == m, { vm.chooseIntroMode(m) })
+        }
+    }
+    Spacer(Modifier.height(6.dp))
+    Text(
+        when (vm.introMode) {
+            IntroMode.OFF -> "Tidak ada tombol lewati intro dan tidak ada tawaran menyimpan posisi."
+            IntroMode.BUTTON -> "Tombol \u201cLewati intro\u201d muncul saat intro berjalan."
+            IntroMode.AUTO -> "Intro langsung dilewati bila posisinya sudah disimpan untuk seri ini."
+        },
+        style = MaterialTheme.typography.bodySmall, color = Palette.TextFaint,
+    )
+    if (vm.introMode == IntroMode.OFF) return
+
+    var pos by remember { mutableLongStateOf(vm.player.currentPosition.coerceAtLeast(0)) }
+    LaunchedEffect(Unit) { while (true) { pos = vm.player.currentPosition.coerceAtLeast(0); delay(500) } }
+    val r = vm.intro
+    Spacer(Modifier.height(12.dp))
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.SurfaceHigh)
+            .border(0.5.dp, Palette.Stroke, RoundedCornerShape(14.dp)).padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Intro seri ini", style = MaterialTheme.typography.titleSmall, color = Palette.Text)
+                Text(
+                    r?.let { "${formatDuration(it.startMs)} – ${formatDuration(it.endMs)}  (${formatDuration(it.lengthMs)}) · kuning di seek bar" } ?: "Belum diatur",
+                    style = MaterialTheme.typography.bodySmall, color = if (r != null) Palette.Warning else Palette.TextDim,
+                )
+            }
+            if (r != null) {
+                Text(
+                    "Hapus", style = MaterialTheme.typography.labelLarge, color = Palette.Danger,
+                    modifier = Modifier.springClick { vm.forgetIntro() }.padding(horizontal = 8.dp, vertical = 6.dp),
+                )
             }
         }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Pill("Mulai di ${formatDuration(pos)}", false, vm::markIntroStart)
+            Pill("Selesai di ${formatDuration(pos)}", false, vm::markIntroEnd)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Putar sampai opening mulai, ketuk \u201cMulai\u201d; saat opening selesai, ketuk \u201cSelesai\u201d. " +
+                "Bisa juga: lewati opening sendiri (geser atau ketuk-dua-kali) lalu ketuk \u201cSimpan\u201d di chip yang muncul.",
+            style = MaterialTheme.typography.bodySmall, color = Palette.TextFaint,
+        )
     }
 }
 

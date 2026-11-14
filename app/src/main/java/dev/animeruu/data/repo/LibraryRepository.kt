@@ -55,6 +55,9 @@ class LibraryRepository(private val db: AppDatabase) {
 
     suspend fun removeHistory(animeId: String) = db.history().delete(animeId)
 
+    /** "Urungkan" setelah menghapus satu baris riwayat (posisi episode tidak ikut terhapus). */
+    suspend fun restoreHistory(h: HistoryEntity) = db.history().upsert(h)
+
     suspend fun clearHistory() {
         db.history().clear()
         db.history().clearProgress()

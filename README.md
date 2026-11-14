@@ -265,16 +265,34 @@ judul hanya menyimpan *baseline*, jadi tidak ada notifikasi palsu. Membuka halam
 menandai episode terbaru "sudah diketahui". Notifikasi berisi poster dan membuka halaman anime itu.
 Bisa dimatikan; ada tombol *Cek sekarang* di Pengaturan.
 
-**Lewati intro yang belajar sendiri.** API tidak menyediakan data intro, jadi aplikasi belajar dari
-pengguna (`IntroLearner`). Rangkaian seek maju yang bersambung (ketuk-dua-kali berulang atau satu
-geser seek bar) di 10 menit pertama dengan total 50–180 dtk dianggap melewati intro, lalu disimpan per
-seri (rata-rata berbobot antar episode). Selama belum ada data, tombol "Lewati 85 dtk" muncul di
-0:20–3:00 untuk episode > 8 menit. Opsi *Lewati intro otomatis* ada di Pengaturan. Lompatan yang
-berakhir sebelum intro dimulai tidak dipelajari.
+**Lewati intro (per seri, atas persetujuan pengguna).** API tidak menyediakan data intro, jadi posisinya
+datang dari pengguna — dan **tidak pernah disimpan diam-diam**. Mode di Pengaturan atau ⚙ pemutar:
+*Mati* (tanpa tombol/deteksi), *Tombol* (bawaan) atau *Otomatis* (langsung lompat, dengan chip
+"Tonton intro" untuk batal). Posisi intro seri didapat dengan dua cara:
+1. ⚙ pemutar → *Intro seri ini* → ketuk "Mulai di m:ss" saat opening mulai dan "Selesai di m:ss"
+   saat selesai (bisa juga dihapus di sana);
+2. melewati opening sendiri: rangkaian seek maju bersambung (`IntroLearner`) di 10 menit pertama dengan
+   total 50–180 dtk memunculkan chip "Simpan posisi intro? 0:32–2:02" — diabaikan = tidak disimpan.
+
+Selama belum ada data, tombol "Lewati 85 dtk" muncul di 0:20–3:00 untuk episode > 8 menit (hanya
+melompat, lalu menawarkan simpan). Intro yang tersimpan ditandai kuning di seek bar (label "Intro"
+muncul saat posisi/titik geser ada di dalamnya). Aturannya murni & teruji di `IntroRules`.
 
 **Gestur pemutar.** Tahan = 2× selama ditahan, dengan haptic. Geser vertikal (layar penuh): kiri =
 kecerahan, kanan = volume. Tap vs tahan diputuskan dari stempel waktu event, bukan timer, sehingga
 tetap benar walau main thread tersendat. Diuji dengan tes instrumentasi `GestureLayerTest`.
+Lompatan ketuk-dua-kali (juga tombol mundur/maju di tengah) bisa 5, 10, atau 15 dtk di Pengaturan;
+notifikasi & earphone tetap 10 dtk. Saat seek bar digeser, gelembung waktu muncul di atas jempol
+(dengan label "Intro" bila di dalam rentang intro). Kecepatan, server & intro diatur di satu tempat:
+lembar ⚙ pemutar.
+
+**Kunci layar (layar penuh).** Ikon gembok di bilah atas mematikan semua gestur & kontrol. Ketuk di
+mana saja (atau tombol kembali) memunculkan gembok selama 3 dtk; ketuk gembok untuk membuka. Kunci
+lepas sendiri saat keluar layar penuh, masuk PiP, atau episode selesai/gagal.
+
+**Urungkan di Koleksi.** Menghapus riwayat atau unduhan memunculkan snackbar "Urungkan" (10 dtk).
+Riwayat langsung dihapus lalu dikembalikan bila diurungkan; file unduhan baru benar-benar dihapus
+saat snackbar hilang (paling lambat 11 dtk, walau layar sudah ditinggal).
 
 ## Pembaruan dalam aplikasi
 

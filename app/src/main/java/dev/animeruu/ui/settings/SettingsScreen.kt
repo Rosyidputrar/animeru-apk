@@ -40,6 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.imageLoader
 import dev.animeruu.AppContainer
 import dev.animeruu.BuildConfig
+import dev.animeruu.data.repo.IntroMode
 import dev.animeruu.data.repo.Settings
 import dev.animeruu.ui.components.GlassIconButton
 import dev.animeruu.ui.components.Pill
@@ -53,7 +54,11 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit) {
     val s by c.settings.settings.collectAsStateWithLifecycle(Settings())
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
-    var cleared by remember { mutableStateOf<String?>(null) }
+    // Umpan balik per baris (id → pesan), supaya pesan tidak muncul di baris lain.
+    var feedback by remember { mutableStateOf<Pair<String, String>?>(null) }
+    fun note(id: String) = feedback?.takeIf { it.first == id }?.second
+    // Aksi yang menghapus data butuh ketukan kedua (id baris yang sedang menunggu konfirmasi).
+    var armed by remember { mutableStateOf<String?>(null) }
 
     Column(Modifier.fillMaxSize().background(Palette.Bg).statusBarsPadding().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -80,15 +85,36 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit) {
             Divider()
             Toggle("Putar audio di latar", "Suara tetap jalan saat keluar aplikasi atau layar dikunci (bila PiP tidak dipakai). Lebih boros baterai & kuota.", s.backgroundAudio) { scope.launch { c.settings.setBackgroundAudio(it) } }
             Divider()
-            Toggle("Lewati intro otomatis", "Bila posisi intro seri itu sudah dipelajari dari lompatanmu sebelumnya", s.autoSkipIntro) { scope.launch { c.settings.setAutoSkipIntro(it) } }
+            Label("Lompatan ketuk-dua-kali", "Juga dipakai tombol mundur/maju di tengah layar. Notifikasi & earphone tetap 10 dtk.")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
+                dev.animeruu.data.repo.SEEK_STEPS.forEach { sec -> Pill("$sec dtk", s.seekStepSec == sec, { scope.launch { c.settings.setSeekStep(sec) } }) }
+            }
+            Divider()
+            Label(
+                "Lewati intro",
+                when (s.introMode) {
+                    IntroMode.OFF -> "Mati: tidak ada tombol lewati intro dan tidak ada tawaran menyimpan posisi."
+                    IntroMode.BUTTON -> "Tombol: \u201cLewati intro\u201d muncul saat intro berjalan. Sebelum posisinya disimpan, tombol melompat 85 dtk."
+                    IntroMode.AUTO -> "Otomatis: intro langsung dilewati bila posisinya sudah disimpan untuk seri itu (ada tombol \u201cTonton intro\u201d untuk batal)."
+                },
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
+                listOf(IntroMode.OFF to "Mati", IntroMode.BUTTON to "Tombol", IntroMode.AUTO to "Otomatis").forEach { (m, l) ->
+                    Pill(l, s.introMode == m, { scope.launch { c.settings.setIntroMode(m) } })
+                }
+            }
+            Text(
+                "Posisi intro diatur per seri dari \u2699 di pemutar (\u201cMulai di…\u201d / \u201cSelesai di…\u201d), atau disimpan saat kamu mengetuk \u201cSimpan\u201d setelah melewati opening sendiri. Tidak ada yang disimpan tanpa persetujuanmu.",
+                style = MaterialTheme.typography.bodySmall, color = Palette.TextFaint, modifier = Modifier.padding(top = 8.dp),
+            )
         }
         Group("Notifikasi") {
             Toggle("Episode baru dari favorit", "Dicek di latar sekitar tiap jam saat ada internet", s.newEpisodeAlerts) { scope.launch { c.settings.setNewEpisodeAlerts(it) } }
             if (s.newEpisodeAlerts) {
                 Divider()
-                Action("Cek sekarang", cleared?.takeIf { it.startsWith("Memeriksa") } ?: "Periksa episode baru semua favorit sekarang juga") {
+                Action("Cek sekarang", note("check") ?: "Periksa episode baru semua favorit sekarang juga") {
                     dev.animeruu.feature.NewEpisodeWorker.runNow(ctx)
-                    cleared = "Memeriksa episode baru… notifikasi muncul bila ada"
+                    feedback = "check" to "Memeriksa episode baru… notifikasi muncul bila ada"
                 }
             }
         }
@@ -101,18 +127,29 @@ fun SettingsScreen(c: AppContainer, onBack: () -> Unit) {
             Toggle("Hanya lewat Wi‑Fi", "Unduhan menunggu sampai tersambung ke jaringan tanpa kuota", s.wifiOnlyDownloads) { scope.launch { c.settings.setWifiOnly(it) } }
         }
         Group("Data") {
-            Action("Hapus riwayat tonton", "Termasuk posisi lanjutkan menonton") {
-                scope.launch { c.library.clearHistory(); cleared = "Riwayat dihapus" }
+            Action(
+                "Hapus riwayat tonton",
+                if (armed == "history") "Ketuk sekali lagi untuk menghapus" else note("history") ?: "Termasuk posisi lanjutkan menonton",
+                danger = armed == "history",
+            ) {
+                if (armed != "history") armed = "history"
+                else { armed = null; scope.launch { c.library.clearHistory(); feedback = "history" to "Riwayat dihapus" } }
             }
             Divider()
-            Action("Lupakan posisi intro", "Semua seri akan dipelajari ulang") {
-                c.introStore.clear(); cleared = "Posisi intro dilupakan"
+            Action(
+                "Hapus semua posisi intro",
+                if (armed == "intro") "Ketuk sekali lagi untuk menghapus" else note("intro") ?: "Posisi intro yang disimpan untuk semua seri",
+                danger = armed == "intro",
+            ) {
+                if (armed != "intro") armed = "intro"
+                else { armed = null; c.introStore.clear(); feedback = "intro" to "Semua posisi intro dihapus" }
             }
             Divider()
-            Action("Bersihkan cache gambar", cleared ?: "Poster dan thumbnail akan dimuat ulang") {
+            Action("Bersihkan cache gambar", note("cache") ?: "Poster dan thumbnail akan dimuat ulang") {
+                armed = null
                 ctx.imageLoader.memoryCache?.clear()
                 ctx.imageLoader.diskCache?.clear()
-                cleared = "Cache gambar dibersihkan"
+                feedback = "cache" to "Cache gambar dibersihkan"
             }
         }
         Text(
@@ -131,9 +168,9 @@ private fun Group(title: String, content: @Composable () -> Unit) {
     ) { content() }
 }
 
-@Composable private fun Label(t: String, sub: String) {
+@Composable private fun Label(t: String, sub: String, subColor: androidx.compose.ui.graphics.Color = Palette.TextDim) {
     Text(t, style = MaterialTheme.typography.titleSmall, color = Palette.Text)
-    Text(sub, style = MaterialTheme.typography.bodySmall, color = Palette.TextDim)
+    Text(sub, style = MaterialTheme.typography.bodySmall, color = subColor)
 }
 
 @Composable private fun Divider() = Box(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(0.5.dp).background(Palette.Stroke))
@@ -147,6 +184,6 @@ private fun Toggle(t: String, sub: String, v: Boolean, onChange: (Boolean) -> Un
 }
 
 @Composable
-private fun Action(t: String, sub: String, onClick: () -> Unit) {
-    Column(Modifier.fillMaxWidth().springClick(pressedScale = 0.98f, onClick = onClick)) { Label(t, sub) }
+private fun Action(t: String, sub: String, danger: Boolean = false, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth().springClick(pressedScale = 0.98f, onClick = onClick)) { Label(t, sub, if (danger) Palette.Danger else Palette.TextDim) }
 }

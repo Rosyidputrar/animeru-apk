@@ -336,12 +336,13 @@ private fun Actions(
                 val dl = downloads[lead.id]
                 SquareAction(
                     icon = if (dl?.completed == true) Icons.Rounded.DownloadDone else Icons.Rounded.Download,
+                    desc = when { dl?.completed == true -> "Terunduh"; dl?.active == true -> "Mengunduh"; else -> "Unduh film" },
                     tint = if (dl?.completed == true) Palette.Success else Palette.Text,
                     progress = dl?.takeIf { it.active }?.percent,
                 ) { vm.download(lead) }
             }
             Spacer(Modifier.width(10.dp))
-            SquareAction(if (fav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (fav) Palette.Accent else Palette.Text) { vm.toggleFavorite() }
+            SquareAction(if (fav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (fav) Palette.Accent else Palette.Text, desc = if (fav) "Hapus dari favorit" else "Tambah ke favorit") { vm.toggleFavorite() }
         }
         if (history != null && history.durationMs > 0) {
             Spacer(Modifier.height(10.dp))
@@ -354,14 +355,14 @@ private fun Actions(
 }
 
 @Composable
-private fun SquareAction(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, progress: Float? = null, onClick: () -> Unit) {
+private fun SquareAction(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, desc: String, progress: Float? = null, onClick: () -> Unit) {
     Box(
         Modifier.size(48.dp).springClick(pressedScale = 0.88f, haptic = true, onClick = onClick)
             .clip(RoundedCornerShape(14.dp)).background(Palette.SurfaceHigh).border(0.5.dp, Palette.Stroke, RoundedCornerShape(14.dp)),
         contentAlignment = Alignment.Center,
     ) {
         if (progress != null) CircularProgressIndicator(progress = { progress / 100f }, Modifier.size(34.dp), color = Palette.Accent, strokeWidth = 2.dp, trackColor = Palette.SurfaceHigher)
-        Icon(icon, null, tint = tint, modifier = Modifier.size(22.dp))
+        Icon(icon, desc, tint = tint, modifier = Modifier.size(22.dp))
     }
 }
 
