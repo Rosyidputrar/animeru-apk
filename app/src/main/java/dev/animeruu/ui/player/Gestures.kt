@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BrightnessMedium
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.VolumeOff
@@ -58,6 +59,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
+import dev.animeruu.core.formatDuration
+import dev.animeruu.feature.IntroRange
 import dev.animeruu.ui.components.springClick
 import dev.animeruu.ui.theme.Motion
 import dev.animeruu.ui.theme.Palette
@@ -239,4 +242,65 @@ fun IntroButton(visible: Boolean, learned: Boolean, onClick: () -> Unit, modifie
             Icon(Icons.Rounded.SkipNext, null, tint = Color.White, modifier = Modifier.size(18.dp))
         }
     }
+}
+
+/**
+ * Chip intro: "Simpan posisi intro?" setelah lompatan manual, atau "Intro dilewati · Tonton intro"
+ * setelah lompat otomatis. Mengabaikannya = tidak terjadi apa-apa (hilang sendiri).
+ */
+@Composable
+fun IntroPromptChip(
+    prompt: IntroPrompt?,
+    onRemember: (IntroRange) -> Unit,
+    onWatch: (Long) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Isi terakhir dipertahankan selama animasi keluar.
+    val last = remember { arrayOfNulls<IntroPrompt>(1) }
+    if (prompt != null) last[0] = prompt
+    AnimatedVisibility(
+        prompt != null, modifier,
+        enter = fadeIn(Motion.gentle()) + slideInHorizontally(Motion.snappy()) { it / 2 },
+        exit = fadeOut(Motion.gentle()),
+    ) {
+        val p = last[0] ?: return@AnimatedVisibility
+        Row(
+            Modifier.clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.72f))
+                .border(0.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                .padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            when (p) {
+                is IntroPrompt.Remember -> {
+                    Column {
+                        Text(if (p.update) "Perbarui posisi intro?" else "Simpan posisi intro?", style = MaterialTheme.typography.labelLarge, color = Color.White)
+                        Text(
+                            "${formatDuration(p.range.startMs)}–${formatDuration(p.range.endMs)} · seri ini",
+                            style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f),
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    ChipAction(if (p.update) "Perbarui" else "Simpan") { onRemember(p.range) }
+                }
+                is IntroPrompt.SkippedAuto -> {
+                    Text("Intro dilewati", style = MaterialTheme.typography.labelLarge, color = Color.White)
+                    Spacer(Modifier.width(10.dp))
+                    ChipAction("Tonton intro") { onWatch(p.backTo) }
+                }
+            }
+            Box(Modifier.size(36.dp).springClick(pressedScale = 0.85f, onClick = onDismiss), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.Close, "Tutup", tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChipAction(text: String, onClick: () -> Unit) {
+    Text(
+        text, style = MaterialTheme.typography.labelLarge, color = Color.White,
+        modifier = Modifier.springClick(pressedScale = 0.92f, haptic = true, onClick = onClick)
+            .clip(RoundedCornerShape(8.dp)).background(Palette.Accent).padding(horizontal = 12.dp, vertical = 7.dp),
+    )
 }

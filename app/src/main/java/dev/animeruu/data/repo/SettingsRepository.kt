@@ -8,6 +8,16 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
+/** Perilaku "Lewati intro" di pemutar. */
+enum class IntroMode {
+    /** Tidak ada tombol, tidak ada tawaran menyimpan posisi. */
+    OFF,
+    /** Tombol "Lewati intro" saat intro berjalan (bawaan). */
+    BUTTON,
+    /** Langsung dilewati bila posisi intro seri itu sudah disimpan. */
+    AUTO,
+}
+
 /** 0 = Otomatis (Wi‑Fi 720p, seluler 480p). */
 data class Settings(
     val preferredHeight: Int = 0,
@@ -20,8 +30,8 @@ data class Settings(
     val autoCheckUpdates: Boolean = true,
     /** Notifikasi episode baru untuk anime favorit (cek latar ±1 jam sekali). */
     val newEpisodeAlerts: Boolean = true,
-    /** Lewati intro otomatis bila posisinya sudah dipelajari untuk seri itu. */
-    val autoSkipIntro: Boolean = false,
+    /** Tombol/otomatis/mati untuk "Lewati intro" (posisi per seri disimpan di IntroStore). */
+    val introMode: IntroMode = IntroMode.BUTTON,
     /** Lanjutkan suara saat aplikasi ditinggal / layar dikunci (tanpa PiP). */
     val backgroundAudio: Boolean = false,
 )
@@ -36,7 +46,9 @@ class SettingsRepository(private val context: Context) {
     private val kPip = booleanPreferencesKey("auto_pip")
     private val kUpd = booleanPreferencesKey("auto_update_check")
     private val kNewEp = booleanPreferencesKey("new_episode_alerts")
-    private val kAutoIntro = booleanPreferencesKey("auto_skip_intro")
+    /** Kunci lama (v1.2–v1.3): true → AUTO, false → BUTTON. */
+    private val kAutoIntroLegacy = booleanPreferencesKey("auto_skip_intro")
+    private val kIntroMode = intPreferencesKey("intro_mode")
     private val kBgAudio = booleanPreferencesKey("background_audio")
 
     val settings: Flow<Settings> = context.store.data.map {
@@ -48,7 +60,8 @@ class SettingsRepository(private val context: Context) {
             autoPip = it[kPip] ?: true,
             autoCheckUpdates = it[kUpd] ?: true,
             newEpisodeAlerts = it[kNewEp] ?: true,
-            autoSkipIntro = it[kAutoIntro] ?: false,
+            introMode = it[kIntroMode]?.let { o -> IntroMode.entries.getOrNull(o) }
+                ?: if (it[kAutoIntroLegacy] == true) IntroMode.AUTO else IntroMode.BUTTON,
             backgroundAudio = it[kBgAudio] ?: false,
         )
     }
@@ -60,6 +73,6 @@ class SettingsRepository(private val context: Context) {
     suspend fun setAutoPip(v: Boolean) = context.store.edit { it[kPip] = v }
     suspend fun setAutoCheckUpdates(v: Boolean) = context.store.edit { it[kUpd] = v }
     suspend fun setNewEpisodeAlerts(v: Boolean) = context.store.edit { it[kNewEp] = v }
-    suspend fun setAutoSkipIntro(v: Boolean) = context.store.edit { it[kAutoIntro] = v }
+    suspend fun setIntroMode(m: IntroMode) = context.store.edit { it[kIntroMode] = m.ordinal }
     suspend fun setBackgroundAudio(v: Boolean) = context.store.edit { it[kBgAudio] = v }
 }

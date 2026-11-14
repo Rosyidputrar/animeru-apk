@@ -48,6 +48,45 @@ class IntroLearner(
     fun reset() { chainStart = -1; chainEnd = -1 }
 }
 
+/**
+ * Aturan intro yang murni (tanpa Android) supaya bisa diuji unit.
+ * Posisi intro TIDAK pernah disimpan diam-diam: hasil deteksi hanya ditawarkan ke pengguna.
+ */
+object IntroRules {
+    /** Panjang opening anime umum; dipakai bila hanya satu ujung yang ditandai. */
+    const val DEFAULT_LENGTH_MS = 85_000L
+    private const val MIN_LENGTH_MS = 5_000L
+
+    /**
+     * Haruskah lompatan [candidate] ditawarkan sebagai posisi intro?
+     * - Melompat MENUJU intro (berakhir sebelum intro dimulai) bukan melewati intro.
+     * - Bila hampir sama dengan yang tersimpan (selisih ≤ 5 dtk), tidak perlu bertanya.
+     */
+    fun shouldOffer(candidate: IntroRange, known: IntroRange?): Boolean {
+        if (known == null) return true
+        if (candidate.endMs <= known.startMs + 10_000) return false
+        return kotlin.math.abs(candidate.startMs - known.startMs) > 5_000 || kotlin.math.abs(candidate.endMs - known.endMs) > 5_000
+    }
+
+    /** "Intro mulai di sini": pertahankan akhir lama bila masih masuk akal, selain itu +85 dtk. */
+    fun markStart(known: IntroRange?, posMs: Long): IntroRange {
+        val end = known?.endMs?.takeIf { it - posMs >= MIN_LENGTH_MS } ?: (posMs + DEFAULT_LENGTH_MS)
+        return IntroRange(posMs, end)
+    }
+
+    /** "Intro selesai di sini": pertahankan awal lama bila masih masuk akal, selain itu −85 dtk. */
+    fun markEnd(known: IntroRange?, posMs: Long): IntroRange {
+        val start = known?.startMs?.takeIf { posMs - it >= MIN_LENGTH_MS } ?: (posMs - DEFAULT_LENGTH_MS).coerceAtLeast(0)
+        return IntroRange(start, posMs)
+    }
+
+    /**
+     * Lewati otomatis bila posisi berada di awal intro (bukan di tengah/akhirnya — bila pengguna
+     * sengaja mundur ke tengah intro, jangan ditarik lagi).
+     */
+    fun inAutoSkipWindow(r: IntroRange, posMs: Long) = posMs in (r.startMs - 500)..(r.startMs + 4_000)
+}
+
 /** Penyimpanan rentang intro per anime (lokal, SharedPreferences). */
 class IntroStore(context: Context) {
     private val prefs = context.getSharedPreferences("intro_skips", Context.MODE_PRIVATE)
@@ -58,14 +97,10 @@ class IntroStore(context: Context) {
         IntroRange(s, e)
     }
 
-    /** Intro antar episode bergeser beberapa detik → simpan rata-rata berbobot dengan nilai lama. */
-    fun learn(animeId: String, r: IntroRange): IntroRange {
-        val old = get(animeId)
-        val merged = if (old != null && kotlin.math.abs(old.startMs - r.startMs) < 60_000) {
-            IntroRange((old.startMs * 2 + r.startMs) / 3, (old.endMs * 2 + r.endMs) / 3)
-        } else r
-        prefs.edit { putString(animeId, "${merged.startMs},${merged.endMs}") }
-        return merged
+    /** Disimpan persis seperti yang dikonfirmasi pengguna (tanpa rata-rata tersembunyi). */
+    fun set(animeId: String, r: IntroRange): IntroRange {
+        prefs.edit { putString(animeId, "${r.startMs},${r.endMs}") }
+        return r
     }
 
     fun forget(animeId: String) = prefs.edit { remove(animeId) }

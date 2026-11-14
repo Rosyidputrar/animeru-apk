@@ -29,7 +29,11 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import dev.animeruu.AppContainer
 import dev.animeruu.core.AppError
+import dev.animeruu.core.formatDuration
 import dev.animeruu.core.userMessage
+import dev.animeruu.data.repo.IntroMode
+import dev.animeruu.feature.IntroRange
+import dev.animeruu.feature.IntroRules
 import dev.animeruu.domain.Anime
 import dev.animeruu.domain.Episode
 import dev.animeruu.domain.SourceChain
@@ -48,6 +52,14 @@ sealed interface PlayerPhase {
     data class AllFailed(val message: String) : PlayerPhase
     /** Episode selesai; [next] siap diputar (hitung mundur di UI). */
     data class Ended(val next: Episode?) : PlayerPhase
+}
+
+/** Chip kecil di atas seek bar terkait intro. Tidak ada yang tersimpan tanpa ketukan pengguna. */
+sealed interface IntroPrompt {
+    /** Lompatan manual terdeteksi → tawarkan simpan sebagai posisi intro seri ini. */
+    data class Remember(val range: IntroRange, val update: Boolean) : IntroPrompt
+    /** Intro baru saja dilewati otomatis; [backTo] = posisi sebelum lompat (untuk "Tonton intro"). */
+    data class SkippedAuto(val backTo: Long) : IntroPrompt
 }
 
 /**
@@ -103,16 +115,22 @@ class PlayerViewModel(
     var offline by mutableStateOf(false)
         private set
 
-    // ---- Lewati intro (dipelajari per seri) ----
-    /** Rentang intro yang sudah dipelajari untuk seri ini (null = belum). */
+    // ---- Lewati intro (per seri) ----
+    /** Rentang intro yang disimpan pengguna untuk seri ini (null = belum diatur). */
     var intro by mutableStateOf(c.introStore.get(animeId))
         private set
     /** true setelah intro episode ini dilewati (tombol disembunyikan). */
     var introSkipped by mutableStateOf(false)
         private set
+    var introMode by mutableStateOf(IntroMode.BUTTON)
+        private set
+    var introPrompt by mutableStateOf<IntroPrompt?>(null)
+        private set
+    private var promptJob: Job? = null
     private val learner = dev.animeruu.feature.IntroLearner()
     private var programmaticSeek = false
-    private var autoSkipIntro = false
+    /** Nilai "putar berikutnya otomatis" dari Pengaturan; "Batal" hanya berlaku untuk episode itu. */
+    private var autoplayPref = true
 
     // ---- Tahan untuk 2× ----
     var boosting by mutableStateOf(false)
@@ -213,32 +231,35 @@ class PlayerViewModel(
 
     init {
         player.addListener(listener)
+        // Diikuti terus: mode intro bisa diubah dari lembar pengaturan pemutar.
         viewModelScope.launch {
-            val st = c.settings.settings.first()
-            autoplay = st.autoplayNext
-            autoSkipIntro = st.autoSkipIntro
+            var first = true
+            c.settings.settings.collect { st ->
+                if (first || st.autoplayNext != autoplayPref) autoplay = st.autoplayNext
+                autoplayPref = st.autoplayNext
+                first = false
+                introMode = st.introMode
+                if (st.introMode == IntroMode.OFF) dismissIntroPrompt()
+            }
         }
-        // Detak 0,5 dtk: selesaikan pembelajaran intro & lewati otomatis bila diaktifkan.
+        // Detak 0,5 dtk: deteksi lompatan intro manual & lewati otomatis bila diaktifkan.
         viewModelScope.launch {
             while (isActive) {
                 delay(500)
-                learner.poll(android.os.SystemClock.elapsedRealtime())?.takeIf { learned ->
-                    // Melompat MENUJU intro (berakhir sebelum intro dimulai) bukan melewati intro.
-                    val known = intro
-                    known == null || learned.endMs > known.startMs + 10_000
-                }?.let { learned ->
-                    val first = intro == null
-                    intro = c.introStore.learn(animeId, learned)
-                    introSkipped = true
-                    flash(if (first) "Posisi intro diingat untuk seri ini" else "Posisi intro diperbarui")
+                learner.poll(android.os.SystemClock.elapsedRealtime())?.let { cand ->
+                    // Hanya DITAWARKAN; baru disimpan bila pengguna mengetuk "Simpan".
+                    if (introMode != IntroMode.OFF && IntroRules.shouldOffer(cand, intro)) {
+                        introSkipped = true
+                        prompt(IntroPrompt.Remember(cand, update = intro != null))
+                    }
                 }
                 val r = intro
-                if (autoSkipIntro && r != null && !introSkipped && phase == PlayerPhase.Playing && player.isPlaying) {
+                if (introMode == IntroMode.AUTO && r != null && !introSkipped && phase == PlayerPhase.Playing && player.isPlaying) {
                     val pos = player.currentPosition
-                    if (pos in (r.startMs - 500)..(r.startMs + 4_000)) {
+                    if (IntroRules.inAutoSkipWindow(r, pos)) {
                         seekProgrammatic(r.endMs)
                         introSkipped = true
-                        flash("Intro dilewati")
+                        prompt(IntroPrompt.SkippedAuto(backTo = pos))
                     }
                 }
             }
@@ -256,6 +277,8 @@ class PlayerViewModel(
         saveProgress()
         learner.reset()
         introSkipped = false
+        dismissIntroPrompt()
+        autoplay = autoplayPref
         episodeId = epId
         failed.clear()
         watchdog?.cancel()
@@ -397,17 +420,78 @@ class PlayerViewModel(
     }
 
     /**
-     * Tombol "Lewati intro". Bila posisi intro sudah dipelajari → lompat ke akhirnya.
-     * Bila belum → lompat 85 dtk (panjang opening umum) dan simpan sebagai tebakan awal,
-     * yang akan diperhalus oleh lompatan manual berikutnya.
+     * Tombol "Lewati intro". Bila posisi intro seri ini sudah disimpan → lompat ke akhirnya.
+     * Bila belum → lompat 85 dtk (panjang opening umum) TANPA menyimpan apa pun; pengguna
+     * ditawari menyimpannya lewat chip, yang bisa diabaikan.
      */
     fun skipIntro() {
         val pos = player.currentPosition
         val r = intro
-        val target = r?.endMs?.takeIf { it > pos } ?: (pos + 85_000)
-        if (r == null && pos <= 10 * 60_000) intro = c.introStore.learn(animeId, dev.animeruu.feature.IntroRange(pos, pos + 85_000))
-        seekProgrammatic(target.coerceAtMost((player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE) - 1_000))
+        val target = (r?.endMs?.takeIf { it > pos } ?: (pos + IntroRules.DEFAULT_LENGTH_MS))
+            .coerceAtMost((player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE) - 1_000)
+        seekProgrammatic(target)
         introSkipped = true
+        if (r == null && introMode != IntroMode.OFF) prompt(IntroPrompt.Remember(IntroRange(pos, target), update = false))
+    }
+
+    private fun prompt(p: IntroPrompt) {
+        introPrompt = p
+        promptJob?.cancel()
+        promptJob = viewModelScope.launch { delay(8_000); introPrompt = null }
+    }
+
+    fun dismissIntroPrompt() {
+        promptJob?.cancel()
+        introPrompt = null
+    }
+
+    /** Ketukan "Simpan" pada chip. */
+    fun rememberIntro(r: IntroRange) {
+        intro = c.introStore.set(animeId, r)
+        dismissIntroPrompt()
+        flash("Intro ${formatDuration(r.startMs)}–${formatDuration(r.endMs)} disimpan untuk seri ini")
+    }
+
+    /** "Tonton intro" setelah dilewati otomatis: kembali ke posisi sebelum lompat. */
+    fun watchIntro(backTo: Long) {
+        dismissIntroPrompt()
+        seekProgrammatic(backTo)
+    }
+
+    /** Lembar pengaturan pemutar: "Intro mulai di sini". */
+    fun markIntroStart() {
+        val r = IntroRules.markStart(intro, player.currentPosition.coerceAtLeast(0))
+        intro = c.introStore.set(animeId, r)
+        introSkipped = true // jangan langsung dilompati/ditawari selagi pengguna menandai
+        flash("Awal intro: ${formatDuration(r.startMs)}")
+    }
+
+    /** Lembar pengaturan pemutar: "Intro selesai di sini". */
+    fun markIntroEnd() {
+        val r = IntroRules.markEnd(intro, player.currentPosition.coerceAtLeast(0))
+        intro = c.introStore.set(animeId, r)
+        introSkipped = true
+        flash("Akhir intro: ${formatDuration(r.endMs)}")
+    }
+
+    fun forgetIntro() {
+        c.introStore.forget(animeId)
+        intro = null
+        flash("Posisi intro seri ini dihapus")
+    }
+
+    fun chooseIntroMode(m: IntroMode) {
+        introMode = m
+        c.appScope.launch { c.settings.setIntroMode(m) }
+    }
+
+    /** "Tonton ulang" dari awal (bukan dari posisi lanjut-tonton saat episode dibuka). */
+    fun replay() {
+        val src = current ?: chain.firstOrNull() ?: run { load(episodeId); return }
+        failed.clear()
+        learner.reset()
+        introSkipped = false
+        start(src, 0)
     }
 
     /** Tahan layar = 2× sementara; lepas = kembali ke kecepatan sebelumnya. */

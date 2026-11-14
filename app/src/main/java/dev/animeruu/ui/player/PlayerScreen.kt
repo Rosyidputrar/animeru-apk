@@ -104,6 +104,7 @@ import androidx.media3.ui.PlayerView
 import dev.animeruu.core.formatDuration
 import kotlinx.coroutines.flow.map
 import dev.animeruu.container
+import dev.animeruu.data.repo.IntroMode
 import dev.animeruu.data.repo.Settings
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.layout.boundsInWindow
@@ -316,7 +317,7 @@ private fun VideoBox(
                         }
                     }
                     if (fullscreen) CtrlIcon(Icons.Rounded.Fullscreen, "Zoom", { zoom = !zoom; vm.flash(if (!zoom) "Pas layar" else "Isi layar") })
-                    CtrlIcon(Icons.Rounded.Settings, "Kualitas & server", onSettings)
+                    CtrlIcon(Icons.Rounded.Settings, "Pengaturan pemutar", onSettings)
                 }
                 Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(36.dp), verticalAlignment = Alignment.CenterVertically) {
                     CtrlIcon(Icons.Rounded.Replay10, "Mundur 10 detik", { p.seekBack(); interact++ }, size = 46.dp)
@@ -360,14 +361,26 @@ private fun VideoBox(
         }
 
         // "Lewati intro": tampil walau kontrol tersembunyi, di atas area seek bar.
-        if (vm.phase == PlayerPhase.Playing && !vm.introSkipped) {
-            val r = vm.intro
-            val show = if (r != null) position in (r.startMs - 1_000)..(r.endMs - 3_000)
-            else duration > 8 * 60_000 && position in 20_000L..180_000L
-            IntroButton(
-                visible = show, learned = r != null,
-                onClick = { vm.skipIntro(); interact++ },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = if (fullscreen) 28.dp else 12.dp, bottom = if (fullscreen) 84.dp else 52.dp),
+        // Mode "Mati" = tidak ada tombol, chip, maupun deteksi.
+        val introSpot = Modifier.align(Alignment.BottomEnd).padding(end = if (fullscreen) 28.dp else 12.dp, bottom = if (fullscreen) 84.dp else 52.dp)
+        if (vm.phase == PlayerPhase.Playing && vm.introMode != IntroMode.OFF) {
+            if (!vm.introSkipped) {
+                val r = vm.intro
+                val show = if (r != null) position in (r.startMs - 1_000)..(r.endMs - 3_000)
+                // Tebakan 85 dtk hanya untuk seri; film tidak punya opening berulang.
+                else vm.anime?.kind != dev.animeruu.domain.AnimeKind.MOVIE && duration > 8 * 60_000 && position in 20_000L..180_000L
+                IntroButton(
+                    visible = show, learned = r != null,
+                    onClick = { vm.skipIntro(); interact++ },
+                    modifier = introSpot,
+                )
+            }
+            IntroPromptChip(
+                prompt = vm.introPrompt,
+                onRemember = vm::rememberIntro,
+                onWatch = vm::watchIntro,
+                onDismiss = vm::dismissIntroPrompt,
+                modifier = introSpot,
             )
         }
 
@@ -458,7 +471,7 @@ private fun EndedOverlay(vm: PlayerViewModel, ph: PlayerPhase.Ended) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Selesai ditonton", style = MaterialTheme.typography.titleMedium, color = Color.White)
                 Spacer(Modifier.height(10.dp))
-                PrimaryButton("Tonton ulang", { vm.player.seekTo(0); vm.player.play(); vm.retry() }, icon = Icons.Rounded.Refresh)
+                PrimaryButton("Tonton ulang", vm::replay, icon = Icons.Rounded.Refresh)
             }
         } else {
             val ring = remember(next.id) { Animatable(0f) }
@@ -561,9 +574,11 @@ private fun SourceSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     ModalBottomSheet(onDismiss, sheetState = state, containerColor = Palette.Surface) {
-        Column(Modifier.padding(horizontal = 20.dp).navigationBarsPadding().padding(bottom = 16.dp)) {
-            Text("Kualitas & server", style = MaterialTheme.typography.titleLarge, color = Palette.Text)
-            Text("Urutan di bawah adalah rantai cadangan otomatis — bila satu gagal, berikutnya dicoba.", style = MaterialTheme.typography.bodySmall, color = Palette.TextDim)
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).navigationBarsPadding().padding(bottom = 16.dp)) {
+            Text("Pengaturan pemutar", style = MaterialTheme.typography.titleLarge, color = Palette.Text)
+            Spacer(Modifier.height(12.dp))
+            Text("Kualitas & server", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
+            Text("Urutan di bawah adalah rantai cadangan otomatis — bila satu gagal, berikutnya dicoba.", style = MaterialTheme.typography.bodySmall, color = Palette.TextFaint)
             Spacer(Modifier.height(12.dp))
             vm.chain.forEachIndexed { i, s ->
                 SourceRow(i, s, s.url == vm.current?.url) {
@@ -577,7 +592,70 @@ private fun SourceSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 SPEEDS.forEach { sp -> Pill(if (sp == 1f) "1×" else "${sp}×", vm.speed == sp, { vm.changeSpeed(sp) }) }
             }
+            Spacer(Modifier.height(18.dp))
+            IntroSection(vm)
         }
+    }
+}
+
+/**
+ * Semua hal tentang intro di satu tempat: mode (berlaku untuk semua seri) dan posisi intro
+ * seri ini, yang bisa ditandai langsung dari posisi putar sekarang.
+ */
+@Composable
+private fun IntroSection(vm: PlayerViewModel) {
+    Text("Lewati intro", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
+    Spacer(Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf(IntroMode.OFF to "Mati", IntroMode.BUTTON to "Tombol", IntroMode.AUTO to "Otomatis").forEach { (m, l) ->
+            Pill(l, vm.introMode == m, { vm.chooseIntroMode(m) })
+        }
+    }
+    Spacer(Modifier.height(6.dp))
+    Text(
+        when (vm.introMode) {
+            IntroMode.OFF -> "Tidak ada tombol lewati intro dan tidak ada tawaran menyimpan posisi."
+            IntroMode.BUTTON -> "Tombol \u201cLewati intro\u201d muncul saat intro berjalan."
+            IntroMode.AUTO -> "Intro langsung dilewati bila posisinya sudah disimpan untuk seri ini."
+        },
+        style = MaterialTheme.typography.bodySmall, color = Palette.TextFaint,
+    )
+    if (vm.introMode == IntroMode.OFF) return
+
+    var pos by remember { mutableLongStateOf(vm.player.currentPosition.coerceAtLeast(0)) }
+    LaunchedEffect(Unit) { while (true) { pos = vm.player.currentPosition.coerceAtLeast(0); delay(500) } }
+    val r = vm.intro
+    Spacer(Modifier.height(12.dp))
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.SurfaceHigh)
+            .border(0.5.dp, Palette.Stroke, RoundedCornerShape(14.dp)).padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Intro seri ini", style = MaterialTheme.typography.titleSmall, color = Palette.Text)
+                Text(
+                    r?.let { "${formatDuration(it.startMs)} – ${formatDuration(it.endMs)}  (${formatDuration(it.lengthMs)})" } ?: "Belum diatur",
+                    style = MaterialTheme.typography.bodySmall, color = if (r != null) Palette.Accent else Palette.TextDim,
+                )
+            }
+            if (r != null) {
+                Text(
+                    "Hapus", style = MaterialTheme.typography.labelLarge, color = Palette.Danger,
+                    modifier = Modifier.springClick { vm.forgetIntro() }.padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Pill("Mulai di ${formatDuration(pos)}", false, vm::markIntroStart)
+            Pill("Selesai di ${formatDuration(pos)}", false, vm::markIntroEnd)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Putar sampai opening mulai, ketuk \u201cMulai\u201d; saat opening selesai, ketuk \u201cSelesai\u201d. " +
+                "Bisa juga: lewati opening sendiri (geser atau ketuk-dua-kali) lalu ketuk \u201cSimpan\u201d di chip yang muncul.",
+            style = MaterialTheme.typography.bodySmall, color = Palette.TextFaint,
+        )
     }
 }
 
