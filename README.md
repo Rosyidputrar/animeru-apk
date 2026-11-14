@@ -275,7 +275,8 @@ datang dari pengguna — dan **tidak pernah disimpan diam-diam**. Mode di Pengat
    total 50–180 dtk memunculkan chip "Simpan posisi intro? 0:32–2:02" — diabaikan = tidak disimpan.
 
 Selama belum ada data, tombol "Lewati 85 dtk" muncul di 0:20–3:00 untuk episode > 8 menit (hanya
-melompat, lalu menawarkan simpan). Aturannya murni & teruji di `IntroRules`.
+melompat, lalu menawarkan simpan). Intro yang tersimpan ditandai kuning di seek bar (label "Intro"
+muncul saat posisi/titik geser ada di dalamnya). Aturannya murni & teruji di `IntroRules`.
 
 **Gestur pemutar.** Tahan = 2× selama ditahan, dengan haptic. Geser vertikal (layar penuh): kiri =
 kecerahan, kanan = volume. Tap vs tahan diputuskan dari stempel waktu event, bukan timer, sehingga

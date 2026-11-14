@@ -335,8 +335,17 @@ private fun VideoBox(
                     CtrlIcon(Icons.Rounded.Forward10, "Maju 10 detik", { p.seekForward(); interact++ }, size = 46.dp)
                 }
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = if (fullscreen) 28.dp else 12.dp, vertical = if (fullscreen) 18.dp else 4.dp)) {
+                    // Rentang intro seri ini ditandai di seek bar (kuning) bila sudah disimpan.
+                    val introMark = vm.intro?.takeIf { vm.introMode != IntroMode.OFF && duration > 0 && it.startMs < duration }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${formatDuration(position)} / ${formatDuration(duration)}", style = MaterialTheme.typography.labelMedium, color = Color.White)
+                        // Label "Intro" saat posisi (atau titik geser) berada di dalam tanda kuning.
+                        AnimatedVisibility(introMark != null && position in introMark.startMs until introMark.endMs, enter = fadeIn(), exit = fadeOut()) {
+                            Text(
+                                "Intro", style = MaterialTheme.typography.labelSmall, color = Color.Black,
+                                modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(6.dp)).background(Palette.Warning).padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
                         Spacer(Modifier.weight(1f))
                         if (vm.stream?.next != null) {
                             Row(
@@ -352,7 +361,7 @@ private fun VideoBox(
                         CtrlIcon(if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen, "Layar penuh", onFullscreen, size = 36.dp)
                     }
                     SeekBar(
-                        position = position, duration = duration, buffered = buffered,
+                        position = position, duration = duration, buffered = buffered, intro = introMark,
                         onScrub = { scrubbing = true; position = it; interact++ },
                         onCommit = { p.seekTo(it); scrubbing = false },
                     )
@@ -404,7 +413,15 @@ private fun VideoBox(
 }
 
 @Composable
-private fun SeekBar(position: Long, duration: Long, buffered: Long, onScrub: (Long) -> Unit, onCommit: (Long) -> Unit) {
+private fun SeekBar(
+    position: Long,
+    duration: Long,
+    buffered: Long,
+    onScrub: (Long) -> Unit,
+    onCommit: (Long) -> Unit,
+    /** Rentang intro yang ditandai di atas trek (null = tanpa tanda). */
+    intro: dev.animeruu.feature.IntroRange? = null,
+) {
     var dragging by remember { mutableStateOf(false) }
     var dragFrac by remember { mutableFloatStateOf(0f) }
     val h by animateDpAsState(if (dragging) 8.dp else 4.dp, Motion.press(), label = "h")
@@ -432,6 +449,19 @@ private fun SeekBar(position: Long, duration: Long, buffered: Long, onScrub: (Lo
             drawLine(Color.White.copy(alpha = 0.22f), Offset(0f, y), Offset(size.width, y), sw, StrokeCap.Round)
             drawLine(Color.White.copy(alpha = 0.4f), Offset(0f, y), Offset(size.width * bufFrac.coerceIn(0f, 1f), y), sw, StrokeCap.Round)
             drawLine(Brush.horizontalGradient(listOf(Palette.Accent, Palette.Accent2)), Offset(0f, y), Offset(size.width * frac.coerceIn(0f, 1f), y), sw, StrokeCap.Round)
+            if (intro != null && duration > 0) {
+                // Di atas progres supaya tetap terlihat setelah dilewati; celah gelap di kedua ujung
+                // memisahkannya dari trek (gaya penanda bab).
+                val x0 = size.width * (intro.startMs.toFloat() / duration).coerceIn(0f, 1f)
+                val x1 = size.width * (intro.endMs.toFloat() / duration).coerceIn(0f, 1f)
+                if (x1 - x0 >= 1f) {
+                    drawLine(Palette.Warning.copy(alpha = 0.85f), Offset(x0, y), Offset(x1, y), sw, StrokeCap.Butt)
+                    val gap = 1.5.dp.toPx()
+                    for (x in floatArrayOf(x0, x1)) {
+                        drawLine(Color.Black.copy(alpha = 0.7f), Offset(x, y - sw / 2), Offset(x, y + sw / 2), gap)
+                    }
+                }
+            }
             drawCircle(Color.White, thumb.toPx() / 2, Offset(size.width * frac.coerceIn(0f, 1f), y))
         }
     }
@@ -634,8 +664,8 @@ private fun IntroSection(vm: PlayerViewModel) {
             Column(Modifier.weight(1f)) {
                 Text("Intro seri ini", style = MaterialTheme.typography.titleSmall, color = Palette.Text)
                 Text(
-                    r?.let { "${formatDuration(it.startMs)} – ${formatDuration(it.endMs)}  (${formatDuration(it.lengthMs)})" } ?: "Belum diatur",
-                    style = MaterialTheme.typography.bodySmall, color = if (r != null) Palette.Accent else Palette.TextDim,
+                    r?.let { "${formatDuration(it.startMs)} – ${formatDuration(it.endMs)}  (${formatDuration(it.lengthMs)}) · kuning di seek bar" } ?: "Belum diatur",
+                    style = MaterialTheme.typography.bodySmall, color = if (r != null) Palette.Warning else Palette.TextDim,
                 )
             }
             if (r != null) {
