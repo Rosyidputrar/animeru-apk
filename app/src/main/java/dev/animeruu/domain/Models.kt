@@ -89,6 +89,8 @@ data class StreamInfo(
     val episode: Episode,
     val next: Episode?,
     val sources: List<StreamSource>,
+    /** Episode sebelumnya (nomor terbesar yang lebih kecil) — null untuk episode pertama. */
+    val prev: Episode? = null,
 ) {
     val playable get() = sources.filter { it.direct }
 }

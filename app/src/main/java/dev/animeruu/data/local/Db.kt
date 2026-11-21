@@ -52,7 +52,7 @@ data class EpisodeProgressEntity(
     val updatedAt: Long,
 )
 
-/** Cache hasil /api/poster (Kitsu) per judul; notFound juga dicache agar tidak dipanggil ulang. */
+/** Cache poster Kitsu per judul (dulu dari /api/poster; kini hanya dibaca, tidak lagi diisi dari jaringan). */
 @Entity(tableName = "poster_cache")
 data class PosterCacheEntity(
     @PrimaryKey val key: String,

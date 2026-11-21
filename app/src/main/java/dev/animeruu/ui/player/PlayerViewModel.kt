@@ -512,6 +512,61 @@ class PlayerViewModel(
         load(n.id)
     }
 
+    fun playPrev() {
+        val p = stream?.prev ?: return
+        load(p.id)
+    }
+
+    // ---- Cari episode (di bawah pemutar) ----
+    var episodeQuery by mutableStateOf("")
+        private set
+    var episodeResults by mutableStateOf<List<Episode>>(emptyList())
+        private set
+    var episodeSearching by mutableStateOf(false)
+        private set
+    var episodeSearchHasMore by mutableStateOf(false)
+        private set
+    private var episodeSearchJob: Job? = null
+
+    /** Ketikan pencarian episode (debounce 350 ms, sama seperti layar detail). */
+    fun onEpisodeQueryChange(q: String) {
+        episodeQuery = q
+        episodeSearchJob?.cancel()
+        if (q.isBlank()) {
+            episodeResults = emptyList()
+            episodeSearchHasMore = false
+            episodeSearching = false
+            return
+        }
+        episodeSearchJob = viewModelScope.launch {
+            delay(350)
+            episodeSearching = true
+            try {
+                // Memakai cache daftar penuh di repository: pencarian pertama mengunduh
+                // daftar lengkap sekali (bila belum ada), pencarian berikutnya lokal.
+                val page = c.anime.episodes(animeId, 0, q)
+                episodeResults = page.items
+                episodeSearchHasMore = page.hasNext
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                episodeResults = emptyList()
+                episodeSearchHasMore = false
+            } finally {
+                episodeSearching = false
+            }
+        }
+    }
+
+    /** Ketuk hasil pencarian: putar episode itu dan bersihkan pencarian. */
+    fun playEpisode(ep: Episode) {
+        episodeSearchJob?.cancel()
+        episodeQuery = ""
+        episodeResults = emptyList()
+        episodeSearchHasMore = false
+        episodeSearching = false
+        load(ep.id)
+    }
+
     fun cancelAutoNext() {
         autoplay = false
     }

@@ -1,11 +1,7 @@
 package dev.animeruu.data.repo
 
-import dev.animeruu.core.AppError
 import dev.animeruu.data.local.PosterCacheEntity
 import dev.animeruu.data.local.PosterDao
-import dev.animeruu.data.remote.ApiClient
-import dev.animeruu.data.remote.PosterDto
-import dev.animeruu.data.remote.toDomain
 import dev.animeruu.domain.PosterArt
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Semaphore
@@ -14,12 +10,17 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Jalur gambar andal: /api/poster (Kitsu) per judul.
- * Tiga lapis: memori → Room (bertahan antar sesi) → jaringan. Permintaan paralel untuk
- * judul yang sama digabung (dedupe) dan konkurensi dibatasi supaya beranda yang memuat
- * ±80 judul tidak membanjiri API.
+ * Poster Kitsu (cache lokal saja).
+ *
+ * Backend baru (anime-r) tidak punya endpoint poster, dan poster Nanime
+ * (`gambar_anime`) sudah dipakai langsung sebagai gambar utama — jadi tidak ada lagi
+ * pencarian Kitsu lewat jaringan. Repository ini dipertahankan supaya:
+ * - entri Kitsu lama yang sudah tersimpan di Room tetap bisa dipakai sebagai fallback
+ *   gambar (dan rating/sinopsis di layar detail),
+ * - [dev.animeruu.ui.components.AnimeArt] dan notifikasi episode baru tidak perlu diubah
+ *   bentuknya — `get()` kini hanya membaca cache, tidak pernah memanggil jaringan.
  */
-class PosterRepository(private val api: ApiClient, private val dao: PosterDao) {
+class PosterRepository(private val dao: PosterDao) {
 
     private val memory = ConcurrentHashMap<String, Result>()
     private val inflight = ConcurrentHashMap<String, CompletableDeferred<Result>>()
@@ -40,42 +41,32 @@ class PosterRepository(private val api: ApiClient, private val dao: PosterDao) {
         val existing = inflight.putIfAbsent(k, mine)
         if (existing != null) return (existing.await() as? Result.Found)?.art
         return try {
-            val r = resolve(k, title)
+            val r = resolve(k)
             memory[k] = r
             mine.complete(r)
             (r as? Result.Found)?.art
         } catch (t: Throwable) {
-            mine.complete(Result.Missing) // penunggu lain tidak menggantung; kegagalan jaringan tidak dicache permanen
+            mine.complete(Result.Missing)
             null
         } finally {
             inflight.remove(k)
         }
     }
 
-    private suspend fun resolve(k: String, title: String): Result {
+    /** Hanya Room: tidak ada lagi panggilan jaringan (anime-r tidak punya /api/poster). */
+    private suspend fun resolve(k: String): Result {
         val now = System.currentTimeMillis()
-        dao.get(k)?.let { c ->
-            val ttl = if (c.notFound) DAY else 14 * DAY
-            if (now - c.fetchedAt < ttl) {
-                return if (c.notFound) Result.Missing
-                else Result.Found(PosterArt(c.poster, c.cover, c.rating, c.synopsis, c.exact, c.episodes))
-            }
-        }
         return gate.withPermit {
-            try {
-                val art = api.get("api/poster", mapOf("title" to title.trim()), PosterDto.serializer())
-                    .envelope.data?.toDomain()
-                if (art == null || (art.posterUrl == null && art.coverUrl == null)) {
-                    dao.put(PosterCacheEntity(k, null, null, null, null, false, null, true, now))
-                    Result.Missing
-                } else {
-                    dao.put(PosterCacheEntity(k, art.posterUrl, art.coverUrl, art.rating, art.synopsisEn, art.exact, art.episodes, false, now))
-                    Result.Found(art)
+            dao.get(k)?.let { c ->
+                val ttl = if (c.notFound) DAY else 14 * DAY
+                if (now - c.fetchedAt < ttl) {
+                    return@withPermit if (c.notFound) Result.Missing
+                    else Result.Found(PosterArt(c.poster, c.cover, c.rating, c.synopsis, c.exact, c.episodes))
                 }
-            } catch (e: AppError.NotFound) {
-                dao.put(PosterCacheEntity(k, null, null, null, null, false, null, true, now))
-                Result.Missing
             }
+            // Tidak ada entri cache → tidak ada yang bisa diberikan; jangan tulis
+            // notFound baru, karena tidak ada sumber jaringan untuk memeriksanya.
+            Result.Missing
         }
     }
 

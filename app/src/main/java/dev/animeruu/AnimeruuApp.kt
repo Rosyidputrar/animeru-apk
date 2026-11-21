@@ -59,7 +59,7 @@ class AppContainer(private val app: Application) {
 
     /**
      * Klien API: cache HTTP di disk. API tidak mengirim Cache-Control yang berguna, jadi
-     * respons sukses ditandai segar 60 dtk (poster 24 jam) — cukup untuk menahan
+     * respons sukses ditandai segar 60 dtk (stream 5 menit) — cukup untuk menahan
      * permintaan ganda, dan entri tetap ada untuk mode offline (stale-if-error di ApiClient).
      */
     val apiHttp: OkHttpClient = baseHttp.newBuilder()
@@ -70,8 +70,7 @@ class AppContainer(private val app: Application) {
             val resp = chain.proceed(req)
             if (!resp.isSuccessful) return@addNetworkInterceptor resp
             val maxAge = when {
-                req.url.encodedPath.startsWith("/api/poster") -> 86_400
-                req.url.encodedPath.endsWith("/stream") -> 300
+                req.url.encodedPath.startsWith("/episode/") -> 300
                 else -> 60
             }
             resp.newBuilder().removeHeader("Pragma").header("Cache-Control", "public, max-age=$maxAge").build()
@@ -81,7 +80,7 @@ class AppContainer(private val app: Application) {
     val api = ApiClient(apiHttp)
     val db = AppDatabase.create(app)
     val anime = AnimeRepository(api)
-    val posters = PosterRepository(api, db.posters())
+    val posters = PosterRepository(db.posters())
     val library = LibraryRepository(db)
     val settings = SettingsRepository(app)
 
