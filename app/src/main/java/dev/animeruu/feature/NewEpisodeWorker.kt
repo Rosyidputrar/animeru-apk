@@ -89,7 +89,7 @@ class NewEpisodeWorker(appContext: Context, params: WorkerParameters) : Coroutin
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        // Poster sebagai ikon besar: CDN dulu, lalu Kitsu; gagal = tanpa gambar (notifikasi tetap terkirim).
+        // Poster sebagai ikon besar: CDN Nanime dulu, lalu poster Kitsu dari cache lokal; gagal = tanpa gambar (notifikasi tetap terkirim).
         val art = c().posters.get(title)
         val bitmap = listOfNotNull(poster, art?.posterUrl).firstNotNullOfOrNull { url ->
             val r = ctx.imageLoader.execute(ImageRequest.Builder(ctx).data(url).size(256).allowHardware(false).build())

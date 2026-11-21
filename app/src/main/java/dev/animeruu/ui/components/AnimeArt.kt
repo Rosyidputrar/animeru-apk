@@ -40,9 +40,10 @@ val LocalPosters = staticCompositionLocalOf<PosterRepository?> { null }
 enum class ArtKind { POSTER, COVER }
 
 /**
- * Pemutus sirkuit untuk CDN sumber (*.animein.net, di balik Cloudflare): bila beberapa
+ * Pemutus sirkuit untuk CDN gambar Nanime (cdn-stable.nanimeid.xyz): bila beberapa
  * gambar pertama gagal dan belum ada satu pun yang berhasil, CDN dilewati selama sesi
- * (dicoba lagi tiap 5 menit) → kartu langsung memakai Kitsu tanpa menunggu 403 dulu.
+ * (dicoba lagi tiap 5 menit) → kartu langsung memakai poster Kitsu dari cache lokal
+ * tanpa menunggu kegagalan berulang.
  */
 object CdnHealth {
     private val fails = AtomicInteger(0)
@@ -59,9 +60,11 @@ object CdnHealth {
 }
 
 /**
- * Gambar anime dengan fallback berjenjang: CDN sumber → poster/cover Kitsu (/api/poster)
- * → placeholder monogram bergradien. Placeholder selalu digambar di bawah sehingga tidak
- * pernah ada kotak kosong atau tata letak yang rusak, apa pun hasil jaringannya.
+ * Gambar anime dengan fallback berjenjang: poster Nanime → poster/cover Kitsu dari cache
+ * lokal ([PosterRepository], tidak lagi dicari lewat jaringan — anime-r tidak punya
+ * endpoint poster) → placeholder monogram bergradien. Placeholder selalu digambar di
+ * bawah sehingga tidak pernah ada kotak kosong atau tata letak yang rusak, apa pun
+ * hasil jaringannya.
  *
  * @param small minta varian kecil (thumbnail kartu) — dimuat cepat, dipakai juga sebagai
  *   placeholder memori untuk versi besar di layar detail (pemuatan progresif).

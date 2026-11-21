@@ -44,9 +44,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
@@ -54,8 +57,10 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -79,14 +84,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
@@ -366,15 +374,12 @@ private fun VideoBox(
                             )
                         }
                         Spacer(Modifier.weight(1f))
+                        if (vm.stream?.prev != null) {
+                            EpisodeNavChip(Icons.Rounded.SkipPrevious, "Sebelumnya", vm::playPrev)
+                            Spacer(Modifier.width(4.dp))
+                        }
                         if (vm.stream?.next != null) {
-                            Row(
-                                Modifier.springClick { vm.playNext() }.clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.14f)).padding(horizontal = 10.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(Icons.Rounded.SkipNext, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Berikutnya", style = MaterialTheme.typography.labelMedium, color = Color.White)
-                            }
+                            EpisodeNavChip(Icons.Rounded.SkipNext, "Berikutnya", vm::playNext)
                             Spacer(Modifier.width(4.dp))
                         }
                         CtrlIcon(if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen, "Layar penuh", onFullscreen, size = 36.dp)
@@ -507,6 +512,18 @@ private fun SeekBar(
 }
 
 @Composable
+private fun EpisodeNavChip(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        Modifier.springClick { onClick() }.clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.14f)).padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = Color.White, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium, color = Color.White)
+    }
+}
+
+@Composable
 private fun StepButton(forward: Boolean, stepSec: Int, onClick: () -> Unit) {
     Box(
         Modifier.size(46.dp).springClick(pressedScale = 0.82f, haptic = true, onClick = onClick)
@@ -604,10 +621,21 @@ private fun InfoPanel(vm: PlayerViewModel, onSettings: () -> Unit) {
                 Pill(s.qualityLabel + if (vm.chain.count { it.qualityLabel == s.qualityLabel } > 1) " · ${s.server}" else "", s.url == vm.current?.url, { vm.select(s) })
             }
         }
+        Spacer(Modifier.height(24.dp))
+        Text("Episode", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            EpisodeNavButton(
+                icon = Icons.Rounded.SkipPrevious, label = "Sebelumnya",
+                enabled = st?.prev != null, modifier = Modifier.weight(1f),
+            ) { vm.playPrev() }
+            EpisodeNavButton(
+                icon = Icons.Rounded.SkipNext, label = "Berikutnya",
+                enabled = st?.next != null, modifier = Modifier.weight(1f),
+            ) { vm.playNext() }
+        }
         val next = st?.next
         if (next != null) {
-            Spacer(Modifier.height(24.dp))
-            Text("Episode berikutnya", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
             Spacer(Modifier.height(10.dp))
             Row(
                 Modifier.fillMaxWidth().springClick(pressedScale = 0.97f) { vm.playNext() }
@@ -626,9 +654,13 @@ private fun InfoPanel(vm: PlayerViewModel, onSettings: () -> Unit) {
                 Icon(Icons.Rounded.SkipNext, null, tint = Palette.TextDim)
             }
         } else if (st != null) {
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(10.dp))
             Text("Ini episode terbaru yang tersedia.", style = MaterialTheme.typography.bodySmall, color = Palette.TextFaint)
         }
+        Spacer(Modifier.height(20.dp))
+        Text("Cari episode", style = MaterialTheme.typography.labelLarge, color = Palette.TextDim)
+        Spacer(Modifier.height(8.dp))
+        EpisodeSearchSection(vm)
         Spacer(Modifier.height(24.dp))
         Row(
             Modifier.springClick(onClick = onSettings).clip(RoundedCornerShape(12.dp)).background(Palette.SurfaceHigh).padding(horizontal = 14.dp, vertical = 10.dp),
@@ -645,6 +677,79 @@ private fun InfoPanel(vm: PlayerViewModel, onSettings: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+/** Tombol navigasi episode di panel info (potret): nonaktif di ujung daftar. */
+@Composable
+private fun EpisodeNavButton(icon: ImageVector, label: String, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Row(
+        modifier
+            .height(44.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Palette.SurfaceHigh)
+            .border(0.5.dp, Palette.Stroke, RoundedCornerShape(12.dp))
+            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
+            .springClick(haptic = true) { if (enabled) onClick() }
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Icon(icon, null, tint = Palette.Text, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.labelLarge, color = Palette.Text)
+    }
+}
+
+/** Pencarian episode di bawah pemutar: nomor atau judul, debounce 350 ms (lihat ViewModel). */
+@Composable
+private fun EpisodeSearchSection(vm: PlayerViewModel) {
+    Row(
+        Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(12.dp))
+            .background(Palette.SurfaceHigh).border(0.5.dp, Palette.Stroke, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Rounded.Search, null, tint = Palette.TextFaint, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Box(Modifier.weight(1f)) {
+            if (vm.episodeQuery.isEmpty()) Text("Cari nomor atau judul episode…", style = MaterialTheme.typography.bodyMedium, color = Palette.TextFaint)
+            BasicTextField(
+                vm.episodeQuery, vm::onEpisodeQueryChange, singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = Palette.Text),
+                cursorBrush = SolidColor(Palette.Accent),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (vm.episodeSearching) {
+            CircularProgressIndicator(Modifier.size(18.dp), color = Palette.TextDim, strokeWidth = 2.dp)
+        } else if (vm.episodeQuery.isNotEmpty()) {
+            Icon(Icons.Rounded.Close, "Hapus", tint = Palette.TextDim, modifier = Modifier.size(24.dp).springClick { vm.onEpisodeQueryChange("") })
+        }
+    }
+    val results = vm.episodeResults
+    if (vm.episodeQuery.isNotBlank() && !vm.episodeSearching && results.isEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        Text("Tidak ada episode yang cocok dengan “${vm.episodeQuery}”.", style = MaterialTheme.typography.bodySmall, color = Palette.TextFaint)
+    }
+    results.forEach { ep ->
+        Spacer(Modifier.height(6.dp))
+        Row(
+            Modifier.fillMaxWidth().springClick(pressedScale = 0.98f) { vm.playEpisode(ep) }
+                .clip(RoundedCornerShape(12.dp)).background(Palette.Surface).border(0.5.dp, Palette.Stroke, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Ep ${ep.numberLabel}", style = MaterialTheme.typography.labelLarge, color = Palette.Accent, modifier = Modifier.width(76.dp))
+            Column(Modifier.weight(1f)) {
+                Text(ep.title, style = MaterialTheme.typography.bodyMedium, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                ep.releasedAt?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.TextFaint) }
+            }
+            Icon(Icons.Rounded.PlayArrow, null, tint = Palette.TextDim, modifier = Modifier.size(20.dp))
+        }
+    }
+    if (vm.episodeSearchHasMore) {
+        Spacer(Modifier.height(6.dp))
+        Text("Menampilkan 30 hasil pertama — persempit pencarian untuk hasil lain.", style = MaterialTheme.typography.bodySmall, color = Palette.TextFaint)
     }
 }
 

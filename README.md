@@ -1,11 +1,36 @@
 # Animeruu
 
-Aplikasi Android streaming anime. Satu-satunya sumber data adalah **REST-ANIM API**
-(`https://rest-anim.vercel.app`), ditambah gambar dari CDN yang dirujuk API dan Kitsu
-(lewat `/api/poster`). Tidak ada akun, tidak ada API key, dan tidak ada layanan pihak ketiga lain.
+Aplikasi Android streaming anime. Satu-satunya sumber data adalah **anime-r**
+(`https://anime-r.rosdiyttaa.workers.dev/docs`), API REST Nanime (passthrough mentah,
+creator `rosyid`, tanpa API key, rate limit 200/menit per IP) — beserta gambar dari CDN
+Nanime yang dirujuk API. Tidak ada akun dan tidak ada layanan pihak ketiga lain.
+Poster Kitsu lama hanya dipakai dari cache lokal bila sudah tersimpan (tidak lagi
+dicari lewat jaringan).
 
 - **applicationId:** `dev.animeruu.app` (debug: `dev.animeruu.app.debug`)
 - **minSdk 26 · targetSdk 35** · APK release ±2,5 MB (R8 + shrink resources)
+
+## Migrasi backend v2.0.0 — rest-anim → anime-r (21 Nov 2026)
+
+Backend lama `rest-anim.vercel.app` diganti penuh oleh anime-r. Pemetaan endpoint:
+
+| Fitur lama | Endpoint anime-r baru |
+|---|---|
+| `GET /api/home` | Disusun dari `GET /anime/latest` (baru + panas, diurutkan views), `GET /anime` (populer), `GET /anime/schedule` (tayang hari ini + segera tayang). Rail trailer / acak / untukmu tidak ada padanannya → disembunyikan UI. |
+| `GET /api/schedule?day=…` | `GET /anime/schedule` (peta 10 hari, dicocokkan ke hari lewat tanggal; TTL cache 30 menit). |
+| `GET /api/search?keyword=&genre=&page=` (60/halaman) | `GET /anime/search?q=&page=&limit=20`, `GET /anime/genre/:genre`, atau `GET /anime` untuk browse; kata kunci + genre disaring di client karena anime-r tidak punya pencarian gabungan. |
+| `GET /api/anime/:id` | `GET /anime/:id` (sudah membawa semua episode + jadwal). |
+| `GET /api/anime/:id/episodes?page=` (30/halaman, server) | `GET /anime/:id/episodes` mengembalikan **semua** episode sekaligus (One Piece: 1.177 episode, ~1,2 MB); dipotong client-side 30/halaman menurun di `AnimeRepository`, jadi `EpisodeLocator` dan UI tidak berubah. |
+| `GET /api/episode/:id/stream` | `GET /episode/:id` → JSON mentah berisi URL MP4 360p–1080p (`qualities[].source_quality`, semua `direct`). Episode berikutnya diambil dari daftar episode yang sudah di-cache; bila belum ada, auto-next tidak tersedia. |
+| `GET /api/poster` (Kitsu) | **Dihapus.** `PosterRepository` kini hanya membaca cache Room lama; gambar utama memakai `gambar_anime` Nanime. |
+
+Catatan bentuk respons anime-r: daftar bisa ada di `data` atau `items`, pagination bisa
+ada di `pagination`, `meta`, atau root — `ApiClient.getList` menormalisasi semuanya.
+`view_anime` bisa berupa angka, `"26.2k"`, atau `"15.2k"` (di-parse di mapper); `rating_anime`
+bisa memakai koma desimal (`"8,18"`). Verifikasi live ada di `LiveApiTest` (`LIVE_API=1`).
+Bagian "Pengujian live" di bawah sudah ditulis ulang untuk anime-r (21 Nov 2026);
+tabel pengujian era rest-anim (8 Nov 2026, endpoint `/api/…`) dipertahankan sebagai
+arsip di bawahnya.
 
 | Beranda | Detail (One Piece) | Episode "Dari awal" | Pemutar + kontrol |
 |---|---|---|---|
@@ -22,7 +47,7 @@ Aplikasi Android streaming anime. Satu-satunya sumber data adalah **REST-ANIM AP
 |---|---|---|
 | UI | **Jetpack Compose** (BOM 2024.12), Material3 hanya sebagai fondasi, design system sendiri | Animasi berbasis fisika ada di semua lapisan; shared element transition bawaan |
 | Navigasi | Navigation Compose 2.8, **rute bertipe** (`@Serializable`), `SharedTransitionLayout` | Argumen aman-tipe; poster "terbang" dari kartu ke detail; predictive back aktif |
-| Jaringan | **OkHttp + kotlinx.serialization**, klien kecil sendiri (`ApiClient`) | Kendali penuh atas retry, cache, dan amplop `{ok,data,pagination,error}` |
+| Jaringan | **OkHttp + kotlinx.serialization**, klien kecil sendiri (`ApiClient`) | Kendali penuh atas retry, cache, dan normalisasi bentuk respons anime-r (`data`/`items`, `pagination`/`meta`/root) |
 | Gambar | **Coil 2** (cache memori 25% + disk 300 MB, header cache diabaikan) | Cache agresif; *crossfade*; placeholder memori untuk muatan progresif |
 | Player | **Media3 ExoPlayer** + `CacheDataSource` + `DefaultDataSource(OkHttp)` | MP4 direct, berbagi pool koneksi, dan berkas unduhan diputar dari cache yang sama |
 | Unduhan | **Media3 DownloadManager / DownloadService** (foreground, `dataSync`) | Unduhan di latar dengan notifikasi progres; selesai/gagal diberi notifikasi sendiri |
@@ -50,38 +75,41 @@ aman (`"UNKNOWN"`, `"-"`, dan string kosong menjadi `null`).
 - Retry hingga 3× dengan *exponential backoff + jitter* (500 ms, 1 dtk, + acak) untuk
   IOException, 5xx, dan 403/429 (upstream menolak secara probabilistik). 400 dan 404 tidak diulang.
 - Cache HTTP di disk (30 MB). API tidak mengirim Cache-Control yang berguna, jadi interceptor
-  menandai respons sukses segar 60 dtk (`/api/poster` 24 jam, `/stream` 5 menit).
+  menandai respons sukses segar 60 dtk (`/episode/:id` 5 menit).
 - **Stale-if-error:** bila semua percobaan gagal, klien meminta cache dengan
   `only-if-cached, max-stale=30d`. Layar menampilkan data lama dengan pita "Offline — menampilkan
   data tersimpan". Bila cache pun tidak ada, muncul `ErrorState` yang dirancang (ikon,
   pesan manusiawi, tombol *Coba lagi*). Tidak pernah ada layar mati.
 
 ### Strategi gambar
-1. **Fallback berjenjang per gambar** (`AnimeArt`): CDN sumber → poster/cover Kitsu dari
-   `/api/poster?title=` → placeholder monogram bergradien (warna deterministik dari judul).
+1. **Fallback berjenjang per gambar** (`AnimeArt`): poster Nanime (`gambar_anime`) →
+   poster/cover Kitsu dari cache lokal (tidak lagi dicari lewat jaringan) →
+   placeholder monogram bergradien (warna deterministik dari judul).
    Placeholder selalu digambar *di bawah* gambar, jadi tidak pernah ada kotak kosong dan
    tata letak tidak pernah bergeser.
-2. **Kitsu diresolusi paralel sejak awal**, bukan menunggu CDN gagal, sehingga fallback selalu siap.
-   `PosterRepository` punya tiga lapis cache (memori → Room 14 hari, *not found* 1 hari →
-   jaringan), menggabungkan permintaan ganda untuk judul yang sama, dan membatasi konkurensi
-   (4) supaya beranda dengan ±80 judul tidak membanjiri API.
-3. **Pemutus sirkuit CDN** (`CdnHealth`): bila 4 gambar pertama dari `*.animein.net` gagal tanpa
+2. **Kitsu dari cache lokal saja.** `PosterRepository` punya tiga lapis cache (memori →
+   Room 14 hari, *not found* 1 hari), menggabungkan permintaan ganda untuk judul yang sama,
+   dan membatasi konkurensi (4) supaya beranda dengan ±80 judul tidak membanjiri Room.
+   Entri baru tidak lagi dibuat dari jaringan karena anime-r tidak punya endpoint poster.
+3. **Pemutus sirkuit CDN** (`CdnHealth`): bila 4 gambar pertama dari CDN Nanime gagal tanpa
    satu pun berhasil, CDN dilewati selama sesi (dicoba ulang tiap 5 menit). Kartu langsung
-   memakai Kitsu tanpa menunggu 403 lebih dulu.
-4. **Progresif:** kartu meminta varian kecil Kitsu (`/small.jpg` bila tersedia). Layar detail
-   memakai varian besar dengan `placeholderMemoryCacheKey` = varian kecil, sehingga gambar
-   tajam menggantikan thumbnail yang sudah tampil, bukan layar kosong.
-5. **Rating, sinopsis, dan jumlah episode Kitsu hanya dipakai bila `match == "exact"`.** Untuk
-   `closest`, posternya tetap dipakai sebagai visual, tetapi metadata tidak (lihat temuan
-   pengujian di bawah).
-6. Banner `slider` dari `/api/home` ternyata **banner promosi** (`{id,image,type,link}`, bukan
-   Movie). Banner itu dimuat diam-diam lebih dulu dan strip-nya hanya muncul (dengan animasi)
-   untuk banner yang berhasil dimuat. Hero pembuka beranda dibentuk dari rail `today` + `hot`.
-   Bila suatu saat `slider` berisi Movie, mapper memasukkannya ke sorotan.
+   memakai Kitsu dari cache tanpa menunggu kegagalan berulang.
+4. **Progresif:** kartu memakai varian kecil Kitsu (`/small.jpg` bila tersedia, dari cache).
+   Layar detail memakai varian besar dengan `placeholderMemoryCacheKey` = varian kecil,
+   sehingga gambar tajam menggantikan thumbnail yang sudah tampil, bukan layar kosong.
+5. **Rating, sinopsis, dan jumlah episode Kitsu (dari cache lama) hanya dipakai bila
+   `match == "exact"`.** Untuk `closest`, posternya tetap dipakai sebagai visual, tetapi
+   metadata tidak (lihat temuan pengujian di bawah).
+6. Beranda tidak lagi punya banner promo: anime-r tidak menyediakan `slider`, jadi strip
+   promo dan rail trailer tidak tampil. Hero pembuka beranda dibentuk dari rail `today` + `hot`.
 
 ### Strategi pagination episode (seri 1000+ episode)
-API menurun (halaman 0 = terbaru), 30 item per halaman, tanpa total. Prinsipnya: **jangan
-pernah memuat halaman berurutan untuk mencari sesuatu.**
+anime-r mengembalikan **semua** episode sekaligus (`GET /anime/:id/episodes`, One Piece:
+1.177 episode, ~1,2 MB). `AnimeRepository` menyimpan daftar penuh di memori per anime
+(dan memakainya dari `detail()` bila sudah dimuat) lalu memotongnya client-side: menurun
+(halaman 0 = terbaru), 30 item per halaman, tanpa total. Prinsipnya: **jangan pernah
+memuat halaman berurutan untuk mencari sesuatu** — setelah daftar penuh diunduh sekali,
+semua halaman, lompatan, dan pencarian episode adalah operasi lokal.
 
 - **Terbaru:** mulai dari halaman 0, *infinite scroll* ke bawah.
 - **Dari awal:** `EpisodeLocator.lastPage()` menebak halaman terakhir dari nomor episode
@@ -90,13 +118,13 @@ pernah memuat halaman berurutan untuk mencari sesuatu.**
 - **Lompat ke episode X** (lembar "Lompat": input angka + kisi rentang 1–100, 101–200, …):
   `EpisodeLocator.pageFor()` menebak `⌊(N−X)/30⌋`, memuat halaman itu, lalu mengoreksi
   memakai rentang nomor yang benar-benar ada di halaman tersebut (data upstream punya
-  celah/duplikat, misalnya One Piece 1180 episode = 1183 entri). Daftar kemudian digulir
+  celah, misalnya One Piece: 1.177 entri untuk nomor 1–1180). Daftar kemudian digulir
   dengan animasi ke episode itu. Tombol "Tampilkan episode sebelumnya/lebih baru" memuat
   ke arah sebaliknya, dan item disisipkan di atas tanpa melompatkan posisi gulir.
-- **Cari:** parameter `search` sisi server (debounce 350 ms), hasilnya juga berhalaman.
-- Halaman dicache per `(query, page)` di ViewModel, jadi ganti urutan atau melompat kembali tidak memuat ulang.
-- Hasil uji live: semua lompatan pada One Piece (ke 1, 500, 1000, 1180, dan halaman terakhir)
-  selesai dalam **1 permintaan**.
+- **Cari:** disaring client-side dari daftar penuh (debounce 350 ms), hasilnya juga berhalaman.
+- Daftar penuh dicache per anime di `AnimeRepository`, jadi ganti urutan atau melompat kembali tidak memuat ulang.
+- Hasil uji live (21 Nov 2026, anime-r): semua lompatan pada One Piece (ke 1, 500, 1000, 1180, dan halaman terakhir)
+  selesai dalam **1 permintaan** — dan itu satu-satunya permintaan jaringan untuk semua halaman.
 
 ### Strategi player & fallback
 - `ExoPlayer` dimiliki **ViewModel** (dibuat dengan `applicationContext`). Rotasi ke layar penuh
@@ -104,8 +132,9 @@ pernah memuat halaman berurutan untuk mencari sesuatu.**
   tepat sekali di `onCleared`. Saat app ke latar: posisi disimpan, lalu pause. Audio focus dan
   *becoming noisy* ditangani, dan `keepScreenOn` hanya aktif di layar player. Hasilnya tidak
   ada audio hantu.
-- **Rantai sumber** (`SourceChain`): hanya server `type: "direct"` (MP4). `semi` adalah
-  halaman embed web dan dibuang. Target kualitas mengikuti pengaturan, atau **Otomatis =
+- **Rantai sumber** (`SourceChain`): semua kualitas dari anime-r (`qualities[].source_quality`)
+  adalah MP4 direct (server `Nanime`, 360p–1080p, kadang 2K); tidak ada lagi server `semi`
+  (halaman embed) seperti di backend lama. Target kualitas mengikuti pengaturan, atau **Otomatis =
   720p di jaringan tak-berkuota, 480p di seluler**. Urutannya dari jarak terdekat ke target;
   bila jaraknya sama, kualitas yang lebih rendah didahulukan.
 - **Fallback otomatis:** `onPlayerError` → sumber berikutnya **dengan posisi dipertahankan**,
@@ -119,9 +148,17 @@ pernah memuat halaman berurutan untuk mencari sesuatu.**
   indikator buffer, layar penuh lanskap imersif dengan mode *zoom*/*fit*.
 - **Resume:** posisi disimpan tiap 5 dtk, saat pause, saat ke latar, dan saat keluar. Saat
   diputar lagi, pemutaran mulai dari posisi itu, kecuali < 10 dtk atau ≥ 95%.
-- **Episode berikutnya:** dari `episode_next`. Di akhir episode muncul cincin hitung mundur
-  5 dtk (bisa dibatalkan, dan bisa dimatikan di Pengaturan). Episode berikutnya dimuat di
-  **player yang sama**.
+- **Episode berikutnya/sebelumnya:** dicari dari daftar episode yang sudah di-cache (`AnimeRepository`:
+  nomor terkecil yang lebih besar / terbesar yang lebih kecil dari episode yang sedang diputar).
+  Di bawah pemutar (potret) ada tombol **Sebelumnya** dan **Berikutnya** (nonaktif di ujung daftar),
+  dan di bar kontrol video ada chip yang sama. Di akhir episode muncul
+  cincin hitung mundur 5 dtk (bisa dibatalkan, dan bisa dimatikan di Pengaturan). Episode
+  berikutnya dimuat di **player yang sama**. Bila daftar episode belum pernah dimuat
+  (misalnya stream dibuka tanpa lewat detail), prev/next tidak tersedia.
+- **Cari episode (di bawah pemutar):** kolom pencarian nomor atau judul episode, debounce
+  350 ms seperti layar detail. Pencarian pertama mengunduh daftar lengkap sekali lewat
+  `AnimeRepository.episodes()` (lalu di-cache); pencarian berikutnya lokal. Hasil (maks. 30,
+  terbaru dulu) diketuk untuk langsung memutar episode itu; pencarian dibersihkan setelah lompat.
 - **Picture-in-Picture otomatis:** bila video sedang diputar dan pengguna menekan Home/menggeser
   keluar, video pindah ke jendela PiP dan terus berputar. Android 12+ memakai
   `setAutoEnterEnabled` (animasi tumbuh dari posisi video lewat `sourceRectHint`), Android 8–11
@@ -185,10 +222,29 @@ LIVE_API=1 ./gradlew :app:testReleaseUnitTest -i           # + uji terhadap API 
 
 ---
 
-## Endpoint yang diuji & buktinya (8 Nov 2026, API production live)
+## Endpoint yang diuji & buktinya (21 Nov 2026, anime-r production live)
 
-Diuji dua jalur: (A) `LiveApiTest` (JVM, memakai `ApiClient` + repository + mapper + `EpisodeLocator`
-yang sama dengan aplikasi) dan (B) APK release yang terinstal di emulator Android 10 (x86_64).
+Diuji lewat `LiveApiTest` (JVM, memakai `ApiClient` + repository + mapper + `EpisodeLocator`
+yang sama dengan aplikasi) terhadap https://anime-r.rosdiyttaa.workers.dev — **5/5 tes lolos**
+(`LIVE_API=1 ./gradlew :app:testReleaseUnitTest --tests '*LiveApiTest*'`), ditambah 21 tes
+unit lainnya yang juga hijau.
+
+| Endpoint | Hasil |
+|---|---|
+| `GET /anime/latest` + `GET /anime` + `GET /anime/schedule` (beranda) | today 8 · hot 20 · new 20 · popular 20 · waiting 20. Rail trailer/acak/untukmu kosong (tidak ada padanannya di anime-r, UI menyembunyikannya). |
+| `GET /anime/schedule` (7 hari) | SENIN 14 · SELASA 6 · RABU 7 · KAMIS 8 · JUMAT 9 · SABTU 8 · MINGGU 26 |
+| `GET /anime` (browse) | p0=20, p1=20, `hasNext` benar. Catatan: tumpang tindih 1 judul antar halaman sesekali — urutan upstream bergeser antar permintaan; tes live menoleransi ≤ 2. |
+| `GET /anime/search` + `GET /anime/genre/:genre` | `q=one` → One Piece pertama. `zzqxqzz` → 0 item, `hasNext=false` → keadaan "Tidak ada hasil". `genre=Horror` → 20 item, semuanya bergenre Horror. |
+| `GET /anime/genres` | 125 genre, ada Action & Horror. |
+| `GET /anime/62` (One Piece, SERIES) | studio Toei Animation, lead = Episode 1, 1.177 episode (nomor 1–1180). |
+| `GET /anime/62/episodes` | halaman 0 = ep 1180…1151. **Halaman terakhir 39 (ep 1–7) dalam 1 permintaan.** Lompat ke ep 1 → hal. 39, ep 500 → hal. 22 (491–520), ep 1000 → hal. 6 (971–1000), ep 1180 → hal. 0, masing-masing 1 permintaan. `search=1000` → [1000]. |
+| `GET /episode/:id` (stream) | ep 1151: kualitas Nanime (2K), next = episode 1152. Ep 1180 (terbaru): next = null — benar, tidak ada episode setelahnya. Film (One Piece Film Red, MOVIE): playable 720p/480p/360p/1080p. |
+| `GET /anime/999999999` (tak dikenal) | 404 → `AppError.NotFound`, ditangani. |
+
+### Arsip: pengujian era rest-anim (8 Nov 2026)
+
+Diuji dua jalur: (A) `LiveApiTest` (JVM) dan (B) APK release yang terinstal di emulator
+Android 10 (x86_64). Nomor screenshot merujuk ke pengujian 8 Nov 2026.
 
 | Endpoint | Hasil |
 |---|---|
@@ -220,17 +276,19 @@ siap sebagai berikutnya. Riwayat dan posisi resume tersimpan (09).
 
 ## Keterbatasan yang diketahui
 
-- **File video di `storages.animein.net` menolak egress lingkungan uji** (Cloudflare 403 dalam
-  ±0,6 dtk, dari container maupun emulator). Di emulator, aplikasi menerima link asli dari API,
-  mencoba **seluruh** rantai (3 sumber untuk ep 1 One Piece), lalu menampilkan overlay
-  "Video tidak dapat diputar" dengan *Coba lagi / Pilih server*. Perilaku itu sesuai desain,
-  tetapi pemutaran file CDN asli tidak bisa dibuktikan dari jaringan ini. Untuk membuktikan
-  bahwa pipeline pemutar benar-benar memutar (surface, dekode, kontrol, resume, auto-next),
-  build **debug** punya kait `files/debug_source.txt` yang menaruh satu URI lokal di depan
-  rantai (sumber API tetap di belakangnya). Kait ini dibuang R8 dari release (diverifikasi: 0
-  referensi di dex release). Screenshot 05/06 berasal dari jalur ini dengan klip uji lokal.
-  Di jaringan pengguna (Indonesia), link `direct` diharapkan bisa diputar langsung.
-  Bila tidak, fallback dan pesan errornya sudah teruji.
+- **Pemutaran file video asli belum bisa dibuktikan dari lingkungan uji ini.** Uji live
+  hanya membuktikan JSON stream (URL MP4 360p–1080p dari `cdn-stable.nanimeid.xyz` berhasil
+  diambil, kualitas & `next` dihitung benar). Seperti di era rest-anim, pemutaran file CDN
+  asli tidak bisa diuji dari jaringan ini (egress dibatasi). Di emulator, aplikasi menerima
+  link asli dari API, mencoba **seluruh** rantai, lalu menampilkan overlay
+  "Video tidak dapat diputar" dengan *Coba lagi / Pilih server* bila gagal. Perilaku itu
+  sesuai desain. Untuk membuktikan bahwa pipeline pemutar benar-benar memutar (surface,
+  dekode, kontrol, resume, auto-next), build **debug** punya kait `files/debug_source.txt`
+  yang menaruh satu URI lokal di depan rantai (sumber API tetap di belakangnya). Kait ini
+  dibuang R8 dari release (diverifikasi: 0 referensi di dex release). Screenshot 05/06
+  berasal dari jalur ini dengan klip uji lokal. Di jaringan pengguna (Indonesia), link
+  `direct` diharapkan bisa diputar langsung. Bila tidak, fallback dan pesan errornya sudah
+  teruji.
 - Emulator uji berjalan tanpa akselerasi hardware (tanpa KVM), jadi kehalusan 120 Hz tidak
   bisa diukur di sana. Klaim motion berdasar desain (pegas, animasi fase draw, `contentType`
   dan `key` di semua daftar, refresh rate tertinggi), bukan profil frame.
@@ -238,15 +296,16 @@ siap sebagai berikutnya. Riwayat dan posisi resume tersimpan (09).
   akan "Gagal — ketuk ulang".
 - Tombol trailer membuka tautan YouTube di aplikasi/peramban sistem (hanya atas aksi pengguna).
   Tautan banner promo juga begitu.
-- Tidak ada daftar "episode sebelumnya" di player (API hanya memberi `episode_next`).
-  Episode lain dipilih dari halaman detail.
+- Tidak ada daftar "episode sebelumnya" di player (anime-r tidak memberi `episode_next`;
+  episode berikutnya dihitung dari daftar episode yang di-cache). Episode lain dipilih
+  dari halaman detail.
 
 ---
 
 ## Fitur v1.3.0 — notifikasi media & audio di latar
 
 Player dibungkus **Media3 `MediaSession`** dan dipasang di **`PlaybackService` (`MediaSessionService`,
-`foregroundServiceType=mediaPlayback`)**. Media3 menangani notifikasi media (poster dari Kitsu, judul,
+`foregroundServiceType=mediaPlayback`)**. Media3 menangani notifikasi media (poster dari Nanime, judul,
 episode), kontrol layar kunci/quick settings, tombol earphone/Bluetooth, dan status foreground.
 Player tetap dimiliki `PlayerViewModel` (satu sumber kebenaran). Service hanya meminjam session lewat
 `PlaybackSessions`, dan session/controller/player dilepas di `onCleared`. Sebuah `ForwardingPlayer`

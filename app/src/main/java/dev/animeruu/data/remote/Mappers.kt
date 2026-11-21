@@ -7,9 +7,6 @@ import dev.animeruu.domain.Anime
 import dev.animeruu.domain.AnimeDetail
 import dev.animeruu.domain.AnimeKind
 import dev.animeruu.domain.Episode
-import dev.animeruu.domain.HomeFeed
-import dev.animeruu.domain.PosterArt
-import dev.animeruu.domain.PromoBanner
 import dev.animeruu.domain.StreamInfo
 import dev.animeruu.domain.StreamSource
 
@@ -25,121 +22,122 @@ private fun absoluteUrl(raw: String?): String? {
 
 private fun String.normalizeText(): String = replace("\r\n", "\n").replace('\r', '\n').trim()
 
-/** null bila item tidak punya id/title (data upstream tidak lengkap → dibuang, bukan crash). */
-fun MovieDto.toAnime(): Anime? {
-    val id = (id_movie.cleanOrNull()?.takeIf { url_youtube != null } ?: id.cleanOrNull()) ?: return null
-    val title = title.cleanOrNull() ?: return null
-    val kindRaw = type.cleanOrNull()?.uppercase()
+/** "15.2k" → 15200, "26.2k" → 26200, "26201" → 26201, "1.4k" → 1400. */
+fun parseViews(raw: String?): Long? {
+    val v = raw.cleanOrNull()?.lowercase() ?: return null
+    return when {
+        v.endsWith("k") -> v.dropLast(1).toDoubleOrNullSafe()?.times(1000)?.toLong()
+        v.endsWith("m") -> v.dropLast(1).toDoubleOrNullSafe()?.times(1_000_000)?.toLong()
+        else -> v.toLongOrNullSafe() ?: v.toDoubleOrNullSafe()?.toLong()
+    }
+}
+
+private fun parseYear(raw: String?): String? =
+    raw?.let { Regex("""\d{4}""").find(it)?.value }
+
+private fun flexList(raw: List<Flex>): List<String> =
+    raw.mapNotNull { it.cleanOrNull() }.distinct()
+
+/**
+ * Satu judul Nanime → [Anime].
+ * @param dayLabel hari tayang dari jadwal (mis. "Sabtu"), bila pemanggil tahu konteksnya.
+ * @param airDate tanggal tayang `yyyy-MM-dd` dari jadwal, bila ada.
+ * @param airTime jam tayang `HH:MM` dari jadwal, bila ada (selain "Random").
+ */
+fun NanimeAnimeDto.toAnime(dayLabel: String? = null, airDate: String? = null, airTime: String? = null): Anime? {
+    val id = id.cleanOrNull() ?: return null
+    val title = nama_anime.cleanOrNull() ?: return null
+    val labelRaw = label_anime.cleanOrNull()?.uppercase()
+    val isMovie = labelRaw == "MOVIE" || content_type.cleanOrNull()?.uppercase() == "FILM"
+    val day = dayLabel
+        ?: schedules.firstOrNull { it.hari.cleanOrNull()?.equals("Random", true) == false }?.hari?.cleanOrNull()
+    val time = airTime?.takeIf { it.matches(Regex("""\d{2}:\d{2}""")) }
+        ?: jam.cleanOrNull()?.takeIf { it.matches(Regex("""\d{2}:\d{2}""")) }
     return Anime(
         id = id,
         title = title.trim(),
-        synopsis = synopsis.cleanOrNull()?.normalizeText(),
-        synonyms = synonyms.cleanOrNull(),
-        posterUrl = absoluteUrl(image_poster),
-        coverUrl = absoluteUrl(image_cover),
-        kind = when (kindRaw) {
-            "MOVIE" -> AnimeKind.MOVIE
-            "SERIES" -> AnimeKind.SERIES
-            null -> AnimeKind.SERIES
-            else -> AnimeKind.OTHER
-        },
-        typeLabel = kindRaw,
-        year = year.cleanOrNull(),
-        day = day.cleanOrNull()?.takeIf { !it.equals("RANDOM", true) },
-        status = status.cleanOrNull(),
-        views = views.toLongOrNullSafe(),
-        favorites = favorites.toLongOrNullSafe(),
-        airedStart = aired_start.cleanOrNull(),
-        airedEnd = aired_end.cleanOrNull(),
-        genres = genre.cleanOrNull()?.split(',')?.mapNotNull { it.cleanOrNull() }?.distinct().orEmpty(),
-        studio = studio.cleanOrNull(),
-        countdown = time.cleanOrNull(),
-        nextAirAt = key_time.cleanOrNull(),
-        seasonLabel = season.cleanOrNull(),
-        trailerUrl = url_youtube.cleanOrNull(),
+        synopsis = sinopsis_anime.cleanOrNull()?.normalizeText(),
+        synonyms = listOfNotNull(title_en.cleanOrNull(), title_jp.cleanOrNull())
+            .joinToString(" / ").takeIf { it.isNotEmpty() },
+        posterUrl = absoluteUrl(gambar_anime),
+        // Nanime tidak punya cover terpisah; poster dipakai juga sebagai cover (di-crop UI).
+        coverUrl = absoluteUrl(gambar_anime),
+        kind = if (isMovie) AnimeKind.MOVIE else AnimeKind.SERIES,
+        typeLabel = labelRaw ?: content_type.cleanOrNull()?.uppercase(),
+        year = parseYear(tanggal_rilis_anime),
+        day = day,
+        status = status_anime.cleanOrNull(),
+        views = parseViews(view_anime),
+        favorites = null, // Nanime tidak menyediakan jumlah favorit
+        airedStart = tanggal_rilis_anime.cleanOrNull(),
+        airedEnd = null,
+        genres = flexList(genre_anime),
+        studio = flexList(studio_anime).joinToString(", ").takeIf { it.isNotEmpty() },
+        countdown = null, // Nanime tidak menyediakan hitung mundur
+        nextAirAt = if (time != null && airDate != null) "$airDate $time" else null,
+        seasonLabel = null, // Nanime tidak punya daftar season
+        trailerUrl = null, // Nanime tidak menyediakan trailer YouTube
     )
 }
 
-fun List<MovieDto>.toAnimeList(): List<Anime> = mapNotNull { it.toAnime() }.distinctBy { it.id }
+fun List<NanimeAnimeDto>.toAnimeList(): List<Anime> = mapNotNull { it.toAnime() }.distinctBy { it.id }
 
-fun MovieDto.toPromo(): PromoBanner? {
-    val img = absoluteUrl(image) ?: return null
-    return PromoBanner(id = id.cleanOrNull() ?: img, imageUrl = img, link = link.cleanOrNull())
-}
-
-fun HomeDto.toDomain() = HomeFeed(
-    promos = slider.filter { it.title.cleanOrNull() == null }.mapNotNull { it.toPromo() },
-    // Bila suatu saat slider berisi anime sungguhan, ia ikut ke rail "today" sebagai sorotan.
-    today = (slider.filter { it.title.cleanOrNull() != null } + today).toAnimeList(),
-    hot = hot.toAnimeList(),
-    new = new.toAnimeList(),
-    popular = popular.toAnimeList(),
-    random = random.toAnimeList(),
-    trailer = trailer.toAnimeList(),
-    waiting = waiting.toAnimeList(),
-    fyp = fyp.toAnimeList(),
-)
-
-fun EpisodeDto.toEpisode(): Episode? {
+fun NanimeEpisodeDto.toEpisode(): Episode? {
     val id = id.cleanOrNull() ?: return null
-    val num = index.toDoubleOrNullSafe()
+    val num = nomor_episode.toDoubleOrNullSafe()
     val label = when {
-        num == null -> index.cleanOrNull() ?: "?"
+        num == null -> nomor_episode.cleanOrNull() ?: "?"
         num % 1.0 == 0.0 -> num.toLong().toString()
         else -> num.toString()
     }
     return Episode(
         id = id,
-        animeId = id_movie.cleanOrNull(),
+        animeId = anime_id.cleanOrNull() ?: anime?.id.cleanOrNull(),
         number = num,
         numberLabel = label,
-        title = title.cleanOrNull() ?: "Episode $label",
-        views = views.toLongOrNullSafe(),
-        releasedAt = key_time.cleanOrNull(),
-        thumbUrl = absoluteUrl(image),
-        isNew = is_new == "1",
+        title = judul_episode.cleanOrNull() ?: "Episode $label",
+        views = parseViews(view_episode),
+        releasedAt = tanggal_rilis_episode.cleanOrNull(),
+        thumbUrl = absoluteUrl(thumbnail_episode),
+        isNew = false, // Nanime tidak menandai episode baru
     )
 }
 
 private val heightRegex = Regex("""(\d{3,4})\s*p""", RegexOption.IGNORE_CASE)
 
-fun ServerDto.toSource(): StreamSource? {
-    val url = link.cleanOrNull()?.takeIf { it.startsWith("http") } ?: return null
-    val q = quality.cleanOrNull() ?: "Auto"
+fun NanimeQualityDto.toSource(): StreamSource? {
+    val url = (hls_url.cleanOrNull() ?: source_quality.cleanOrNull())
+        ?.takeIf { it.startsWith("http") } ?: return null
+    val q = nama_quality.cleanOrNull() ?: "Auto"
     return StreamSource(
         id = id.cleanOrNull() ?: url,
-        server = name.cleanOrNull() ?: "Server",
+        server = "Nanime",
         qualityLabel = q,
         height = heightRegex.find(q)?.groupValues?.get(1)?.toIntOrNull(),
         url = url,
-        sizeMb = key_file_size.toDoubleOrNullSafe(),
-        direct = type.equals("direct", true),
+        sizeMb = hls_size.toDoubleOrNullSafe(),
+        direct = true, // semua kualitas Nanime adalah MP4 langsung
     )
 }
 
-fun StreamDto.toDomain(): StreamInfo? {
-    val ep = episode?.toEpisode() ?: return null
+/** Episode stream + episode sebelum/berikutnya (dari daftar episode yang sudah di-cache, bila ada). */
+fun NanimeEpisodeDto.toStream(next: Episode? = null, prev: Episode? = null): StreamInfo? {
+    val ep = toEpisode() ?: return null
     return StreamInfo(
         episode = ep,
-        next = episode_next?.toEpisode(),
-        sources = server.mapNotNull { it.toSource() }.distinctBy { it.url },
+        next = next,
+        sources = qualities.mapNotNull { it.toSource() }.distinctBy { it.url },
+        prev = prev,
     )
 }
 
-fun DetailDto.toDomain(): AnimeDetail? {
-    val a = movie?.toAnime() ?: return null
+fun NanimeAnimeDto.toDetail(): AnimeDetail? {
+    val a = toAnime() ?: return null
+    val eps = episodes.mapNotNull { it.toEpisode() }.sortedBy { it.number ?: Double.MAX_VALUE }
     return AnimeDetail(
         anime = a,
-        leadEpisode = episode?.toEpisode(),
-        seasons = season.toAnimeList(),
+        // Episode pertama (terendah) — untuk film inilah satu-satunya episode yang diputar.
+        leadEpisode = eps.firstOrNull(),
+        seasons = emptyList(), // Nanime tidak punya daftar season
     )
 }
-
-fun PosterDto.toDomain() = PosterArt(
-    posterUrl = poster.cleanOrNull(),
-    coverUrl = cover.cleanOrNull(),
-    rating = rating.toDoubleOrNullSafe()?.let { it / 10.0 },
-    synopsisEn = synopsis.cleanOrNull(),
-    exact = match.equals("exact", true),
-    episodes = episodes.toLongOrNullSafe()?.toInt(),
-)
